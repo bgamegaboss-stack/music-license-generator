@@ -1,13 +1,14 @@
 @echo off
 echo ============================================
-echo  BUILD MUSIC LICENSE GENERATOR EXE
+echo  BUILD AEGIS AUDIO EXE
 echo ============================================
 
-python -m PyInstaller ^
-  --name "MusicLicenseGenerator" ^
+pyinstaller ^
+  --name "AegisAudio" ^
   --onefile ^
   --windowed ^
   --noconfirm ^
+  --icon=app.ico ^
   --collect-all transformers ^
   --collect-all torch ^
   --collect-all customtkinter ^
