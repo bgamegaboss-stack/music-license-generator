@@ -3,9 +3,15 @@ from transformers import MusicgenForConditionalGeneration, MusicgenProcessor
 import soundfile as sf
 import hashlib
 import os
+import sys
 from datetime import datetime
 from fpdf import FPDF
 import zipfile
+import traceback
+
+# ВАЖНО: переключаем рабочую папку на ту, где лежит этот скрипт
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir)
 
 class MusicLicenseGenerator:
     def __init__(self):
@@ -108,7 +114,7 @@ def main():
     
     # Показываем, где будут сохранены файлы
     current_dir = os.getcwd()
-    print(f"\nФайлы будут сохранены в папке: {current_dir}")
+    print(f"\nРабочая папка: {current_dir}")
     print("=" * 60)
     
     # Инициализация
@@ -143,6 +149,12 @@ def main():
     print("=" * 60)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print("\n" + "=" * 60)
+        print("ОШИБКА!")
+        print("=" * 60)
+        print(traceback.format_exc())
 
 input("\nНажмите Enter для выхода...")
