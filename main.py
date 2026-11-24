@@ -8,6 +8,7 @@ from datetime import datetime
 from fpdf import FPDF
 import zipfile
 import traceback
+import numpy as np
 
 # ВАЖНО: переключаем рабочую папку на ту, где лежит этот скрипт
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -34,9 +35,22 @@ class MusicLicenseGenerator:
         with torch.no_grad():
             audio_values = self.model.generate(**inputs, max_new_tokens=duration * 50)
         
+        # Правильно извлекаем аудио из тензора
+        # audio_values имеет форму (batch, channels, samples)
+        audio = audio_values[0].cpu().numpy()
+        
+        # Убираем размерность канала если есть (для моно аудио)
+        if audio.ndim > 1:
+            audio = audio.squeeze()
+        
+        # Проверяем, что данные в правильном диапазоне
+        print(f"Форма аудио: {audio.shape}, мин: {audio.min():.4f}, макс: {audio.max():.4f}")
+        
         # Сохраняем аудио
         filename = f"track_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        sf.write(filename, audio_values[0].numpy(), samplerate=32000)
+        sf.write(filename, audio, samplerate=32000, subtype='PCM_16')
+        
+        print(f"Файл сохранен: {filename}, размер: {os.path.getsize(filename)} байт")
         
         return filename
     
