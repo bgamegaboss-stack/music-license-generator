@@ -1,0 +1,8 @@
+torch
+transformers
+soundfile
+fpdf2
+numpy
+customtkinter
+sounddevice
+pyinstaller
