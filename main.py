@@ -1,6 +1,5 @@
 import torch
 from transformers import MusicgenForConditionalGeneration, MusicgenProcessor
-import soundfile as sf
 import hashlib
 import os
 import sys
@@ -9,6 +8,14 @@ from fpdf import FPDF
 import zipfile
 import traceback
 import numpy as np
+
+# Пытаемся импортировать soundfile, если не получится - используем scipy
+try:
+    import soundfile as sf
+    HAS_SOUNDFILE = True
+except:
+    HAS_SOUNDFILE = False
+    from scipy.io import wavfile
 
 # ВАЖНО: переключаем рабочую папку на ту, где лежит этот скрипт
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -35,22 +42,39 @@ class MusicLicenseGenerator:
         with torch.no_grad():
             audio_values = self.model.generate(**inputs, max_new_tokens=duration * 50)
         
-        # Правильно извлекаем аудио из тензора
-        # audio_values имеет форму (batch, channels, samples)
+        # Правильно извлекаем аудио
+        # MusicGen возвращает форму (batch, channels, samples)
         audio = audio_values[0].cpu().numpy()
         
-        # Убираем размерность канала если есть (для моно аудио)
+        # Убираем размерность канала - делаем моно
         if audio.ndim > 1:
-            audio = audio.squeeze()
+            audio = audio.squeeze(0)
         
-        # Проверяем, что данные в правильном диапазоне
-        print(f"Форма аудио: {audio.shape}, мин: {audio.min():.4f}, макс: {audio.max():.4f}")
+        print(f"Форма аудио: {audio.shape}")
+        print(f"Диапазон значений: от {audio.min():.4f} до {audio.max():.4f}")
+        
+        # Нормализуем в диапазон -1.0 ... 1.0 если нужно
+        max_val = np.max(np.abs(audio))
+        if max_val > 1.0:
+            audio = audio / max_val
+            print(f"Аудио нормализовано, новый максимум: {np.max(np.abs(audio)):.4f}")
         
         # Сохраняем аудио
         filename = f"track_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        sf.write(filename, audio, samplerate=32000, subtype='PCM_16')
         
-        print(f"Файл сохранен: {filename}, размер: {os.path.getsize(filename)} байт")
+        if HAS_SOUNDFILE:
+            sf.write(filename, audio, samplerate=32000, subtype='PCM_16')
+        else:
+            # Fallback на scipy - конвертируем в int16
+            audio_int16 = (audio * 32767).astype(np.int16)
+            wavfile.write(filename, 32000, audio_int16)
+        
+        file_size = os.path.getsize(filename)
+        print(f"Файл сохранен: {filename}")
+        print(f"Размер файла: {file_size} байт ({file_size / 1024 / 1024:.2f} МБ)")
+        
+        if file_size < 1000:
+            print("ВНИМАНИЕ: файл слишком маленький, возможно проблема с записью!")
         
         return filename
     
@@ -68,12 +92,10 @@ class MusicLicenseGenerator:
         pdf.add_page()
         pdf.set_font("Arial", size=12)
         
-        # Заголовок
         pdf.set_font("Arial", "B", 16)
         pdf.cell(200, 10, txt="COMMERCIAL MUSIC LICENSE CERTIFICATE", ln=True, align="C")
         pdf.ln(10)
         
-        # Основная информация
         pdf.set_font("Arial", size=12)
         pdf.cell(200, 10, txt=f"License Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
         pdf.cell(200, 10, txt=f"License Holder: {user_name}", ln=True)
@@ -81,7 +103,6 @@ class MusicLicenseGenerator:
         pdf.cell(200, 10, txt=f"File Hash (SHA-256): {file_hash}", ln=True)
         pdf.ln(10)
         
-        # Текст лицензии
         pdf.set_font("Arial", "B", 14)
         pdf.cell(200, 10, txt="LICENSE TERMS:", ln=True)
         pdf.ln(5)
@@ -101,7 +122,6 @@ other files."""
         
         pdf.multi_cell(0, 6, license_text)
         
-        # Сохраняем PDF
         pdf_filename = f"license_{audio_filename.replace('.wav', '.pdf')}"
         pdf.output(pdf_filename)
         
@@ -115,7 +135,6 @@ other files."""
             zipf.write(audio_filename)
             zipf.write(pdf_filename)
         
-        # Удаляем временные файлы
         os.remove(audio_filename)
         os.remove(pdf_filename)
         
@@ -126,34 +145,27 @@ def main():
     print("MUSIC LICENSE GENERATOR - MVP")
     print("=" * 60)
     
-    # Показываем, где будут сохранены файлы
     current_dir = os.getcwd()
     print(f"\nРабочая папка: {current_dir}")
     print("=" * 60)
     
-    # Инициализация
     generator = MusicLicenseGenerator()
     
-    # Ввод данных
     prompt = input("\nВведите описание музыки (например, 'epic cyberpunk chase music'): ")
     duration = int(input("Длительность в секундах (рекомендуется 10-30): ") or "10")
     user_name = input("Имя пользователя для лицензии (или нажмите Enter для 'User'): ") or "User"
     
     print("\nГенерация...")
     
-    # Генерация музыки
     audio_file = generator.generate_music(prompt, duration)
     print(f"Аудио создано: {audio_file}")
     
-    # Вычисление хеша
     file_hash = generator.calculate_hash(audio_file)
     print(f"Хеш файла: {file_hash}")
     
-    # Генерация лицензии
     pdf_file = generator.generate_license_pdf(audio_file, file_hash, user_name)
     print(f"Лицензия создана: {pdf_file}")
     
-    # Упаковка
     zip_package = generator.create_package(audio_file, pdf_file)
     
     print("\n" + "=" * 60)
