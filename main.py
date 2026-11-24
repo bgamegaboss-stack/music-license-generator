@@ -89,4 +89,60 @@ other files."""
     
     def create_package(self, audio_filename, pdf_filename):
         """Упаковывает аудио и лицензию в ZIP"""
-        zip_filename = f"
+        zip_filename = f"music_package_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        
+        with zipfile.ZipFile(zip_filename, 'w') as zipf:
+            zipf.write(audio_filename)
+            zipf.write(pdf_filename)
+        
+        # Удаляем временные файлы
+        os.remove(audio_filename)
+        os.remove(pdf_filename)
+        
+        return zip_filename
+
+def main():
+    print("=" * 60)
+    print("MUSIC LICENSE GENERATOR - MVP")
+    print("=" * 60)
+    
+    # Показываем, где будут сохранены файлы
+    current_dir = os.getcwd()
+    print(f"\nФайлы будут сохранены в папке: {current_dir}")
+    print("=" * 60)
+    
+    # Инициализация
+    generator = MusicLicenseGenerator()
+    
+    # Ввод данных
+    prompt = input("\nВведите описание музыки (например, 'epic cyberpunk chase music'): ")
+    duration = int(input("Длительность в секундах (рекомендуется 10-30): ") or "10")
+    user_name = input("Имя пользователя для лицензии (или нажмите Enter для 'User'): ") or "User"
+    
+    print("\nГенерация...")
+    
+    # Генерация музыки
+    audio_file = generator.generate_music(prompt, duration)
+    print(f"Аудио создано: {audio_file}")
+    
+    # Вычисление хеша
+    file_hash = generator.calculate_hash(audio_file)
+    print(f"Хеш файла: {file_hash}")
+    
+    # Генерация лицензии
+    pdf_file = generator.generate_license_pdf(audio_file, file_hash, user_name)
+    print(f"Лицензия создана: {pdf_file}")
+    
+    # Упаковка
+    zip_package = generator.create_package(audio_file, pdf_file)
+    
+    print("\n" + "=" * 60)
+    print(f"ГОТОВО! Пакет создан: {zip_package}")
+    print("Внутри: аудиофайл + PDF-сертификат лицензии")
+    print(f"\nВсе файлы находятся в папке: {current_dir}")
+    print("=" * 60)
+
+if __name__ == "__main__":
+    main()
+
+input("\nНажмите Enter для выхода...")
