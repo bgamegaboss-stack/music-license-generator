@@ -3,7 +3,7 @@ echo ============================================
 echo  BUILD AEGIS AUDIO EXE
 echo ============================================
 
-pyinstaller ^
+python -m PyInstaller ^
   --name "AegisAudio" ^
   --onefile ^
   --windowed ^
