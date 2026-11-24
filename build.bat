@@ -3,7 +3,7 @@ echo ============================================
 echo  BUILD MUSIC LICENSE GENERATOR EXE
 echo ============================================
 
-pyinstaller ^
+python -m PyInstaller ^
   --name "MusicLicenseGenerator" ^
   --onefile ^
   --windowed ^
