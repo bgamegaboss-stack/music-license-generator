@@ -1,6 +1,6 @@
 @echo off
 echo ============================================
-echo  BUILD AEGIS AUDIO EXE
+echo  BUILD AEGIS AUDIO EXE (iOS GLASS EDITION)
 echo ============================================
 
 python -m PyInstaller ^
@@ -12,6 +12,9 @@ python -m PyInstaller ^
   --collect-all transformers ^
   --collect-all torch ^
   --collect-all customtkinter ^
+  --collect-all matplotlib ^
+  --hidden-import scipy ^
+  --hidden-import scipy.signal ^
   --hidden-import sounddevice ^
   --hidden-import fpdf ^
   --hidden-import soundfile ^
