@@ -29,14 +29,14 @@ ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
 # iOS палитра
-BG_APP = "#F2F2F7"          # system background
-BG_GLASS = "#FFFFFF"        # стеклянная карточка
+BG_APP = "#F2F2F7"
+BG_GLASS = "#FFFFFF"
 BG_GLASS_HOVER = "#F9F9FB"
 BG_GLASS_ACTIVE = "#EBF3FF"
 BORDER = "#E5E5EA"
 BORDER_STRONG = "#D1D1D6"
 
-ACCENT = "#007AFF"          # iOS blue
+ACCENT = "#007AFF"
 ACCENT_HOVER = "#0066CC"
 ACCENT_LIGHT = "#E5F1FF"
 
@@ -54,16 +54,16 @@ SLIDER_BUTTON = "#FFFFFF"
 SLIDER_BUTTON_HOVER = "#F2F2F7"
 
 SAMPLE_RATE = 32000
-NATIVE_CHUNK = 30           # нативный лимит контекста модели
-CONTEXT_TAIL = 10           # сколько секунд подавать как audio-контекст
-CROSSFADE = 2               # секунд плавной склейки
+NATIVE_CHUNK = 30
+CONTEXT_TAIL = 10
+CROSSFADE = 2
 
 PRESETS = {
     "Synthwave": "dark synthwave chase scene, heavy bass, 120 bpm, retro analog synths",
     "Cyberpunk": "cyberpunk industrial techno, distorted bass, glitchy percussion",
     "Epic Orchestral": "epic cinematic orchestral trailer music, brass, choir, timpani",
     "Lo-fi Chill": "lo-fi hip hop beat, warm vinyl crackle, mellow piano, chill",
-    "Trap": "aggressive drill trap instrumental, distorted 808 sub-bass sliding notes, rapid triplet hi-hats rolls, dark minor key melody, crisp snare hits, studio quality mix",
+    "Trap": "aggressive drill trap instrumental, distorted 808 sub-bass sliding notes, rapid triplet hi-hats rolls, dark minor key melody, crisp snare hits, high fidelity production, studio quality mix",
     "Ambient": "ambient space drone, ethereal pads, slow evolving textures",
     "Dark Cinematic": "dark cinematic tension, low strings, ominous atmosphere",
     "Electronic": "upbeat electronic dance music, energetic synths, driving beat",
@@ -102,7 +102,6 @@ class MusicLicenseGenerator:
         Если audio_context передан — модель ПРОДОЛЖАЕТ мелодию, а не начинает заново.
         """
         if audio_context is not None:
-            # audio_context должен быть float32 tensor shape (1, samples)
             ctx = torch.from_numpy(audio_context).float().unsqueeze(0)
             inputs = self.processor(
                 text=[prompt],
@@ -135,10 +134,6 @@ class MusicLicenseGenerator:
 
     @staticmethod
     def _blend_with_crossfade(result, new_chunk, crossfade_samples):
-        """
-        Склеивает результат и новый чанк с плавным кроссфейдом.
-        Новый чанк перекрывает последние crossfade_samples секунд результата.
-        """
         fade_out = np.linspace(1.0, 0.0, crossfade_samples)
         fade_in = np.linspace(0.0, 1.0, crossfade_samples)
 
@@ -156,11 +151,9 @@ class MusicLicenseGenerator:
                  temperature=1.0, guidance_scale=3.0):
         """
         ГЕНЕРИРУЕТ ЦЕЛЬНЫЙ ТРЕК.
-        Для duration <= 30 сек — один кусок.
         Для duration > 30 сек — continuation: каждый новый кусок получает
         последние 10 секунд предыдущего как аудио-контекст. Модель ПРОДОЛЖАЕТ
-        мелодию, а не начинает новую. Это и есть исправление проблемы со сменой
-        мелодии на границе чанка.
+        мелодию, а не начинает новую.
         """
         self.status("Генерация аудио...")
 
@@ -172,19 +165,16 @@ class MusicLicenseGenerator:
             self.progress(95)
             return audio
 
-        # Первый чанк — полная генерация
         self.progress(15)
         self.status("Генерация: начало мелодии...")
         result = self._generate_with_context(
             prompt, NATIVE_CHUNK, None, seed, temperature, guidance_scale
         )
 
-        # Последующие чанки — continuation с аудио-контекстом
         remaining = duration - NATIVE_CHUNK
         step = 0
         while remaining > 0:
             step += 1
-            # Сколько генерировать в этом шаге (не больше нативного лимита минус контекст)
             chunk_len = min(remaining, NATIVE_CHUNK - CONTEXT_TAIL)
             if chunk_len < 3:
                 chunk_len = remaining
@@ -192,7 +182,6 @@ class MusicLicenseGenerator:
             self.status(f"Продолжение мелодии... шаг {step}")
             self.progress(int(15 + (step / (step + remaining / 20)) * 70))
 
-            # Берём последние CONTEXT_TAIL секунд как аудио-контекст
             ctx_samples = CONTEXT_TAIL * SAMPLE_RATE
             if len(result) < ctx_samples:
                 ctx_samples = len(result)
@@ -204,13 +193,11 @@ class MusicLicenseGenerator:
                 temperature, guidance_scale
             )
 
-            # Кроссфейд на границе
             crossfade_samples = min(CROSSFADE * SAMPLE_RATE, len(result), len(new_chunk))
             result = self._blend_with_crossfade(result, new_chunk, crossfade_samples)
 
             remaining -= (chunk_len - CROSSFADE)
 
-        # Обрезаем до нужной длительности
         target_samples = int(duration * SAMPLE_RATE)
         if len(result) > target_samples:
             result = result[:target_samples]
@@ -292,28 +279,29 @@ Issued by: Aegis Audio"""
 
 
 class GlassCard(ctk.CTkFrame):
-    """Карточка в стиле iOS Liquid Glass — белая, с тонкой границей и скруглением."""
+    """Карточка в стиле iOS Liquid Glass."""
     def __init__(self, master, **kwargs):
-        super().__init__(
-            master,
-            fg_color=BG_GLASS,
-            border_color=BORDER,
-            border_width=1,
-            corner_radius=22,
-            **kwargs
-        )
+        kwargs.setdefault('fg_color', BG_GLASS)
+        kwargs.setdefault('border_color', BORDER)
+        kwargs.setdefault('border_width', 1)
+        kwargs.setdefault('corner_radius', 22)
+        super().__init__(master, **kwargs)
 
 
 class iOSButton(ctk.CTkButton):
     """Кнопка с hover-анимацией scale (имитация iOS press effect)."""
     def __init__(self, master, base_height=44, **kwargs):
-        super().__init__(master, height=base_height, corner_radius=14, **kwargs)
+        # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: не дублируем corner_radius
+        kwargs.setdefault('corner_radius', 14)
+        kwargs.setdefault('height', base_height)
+        super().__init__(master, **kwargs)
         self.base_height = base_height
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
 
     def _on_enter(self, event):
-        self.configure(height=self.base_height + 2)
+        if str(self.cget("state")) == "normal":
+            self.configure(height=self.base_height + 2)
 
     def _on_leave(self, event):
         self.configure(height=self.base_height)
@@ -342,28 +330,24 @@ class App(ctk.CTk):
         self.track_count = 0
         self.history = []
         self._pulse_state = False
-        self._wave_step = 0
         self._wave_fig = None
+        self._wave_ax = None
         self._wave_canvas = None
 
         self._build_ui()
 
-        # Анимация пульсации статуса при загрузке модели
         self.after(300, self._pulse_status)
 
         threading.Thread(target=self._load_model, daemon=True).start()
 
     # ===== UI BUILD =====
     def _build_ui(self):
-        # Главный контейнер
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=24, pady=24)
 
-        # Левая колонка
         left = ctk.CTkFrame(main, fg_color="transparent")
         left.pack(side="left", fill="both", expand=True)
 
-        # Правая колонка (история)
         right = GlassCard(main, width=300)
         right.pack(side="right", fill="y", padx=(16, 0))
         right.pack_propagate(False)
@@ -401,7 +385,7 @@ class App(ctk.CTk):
 
         self.status_label = ctk.CTkLabel(
             status_card, text="Инициализация...",
-            font=("SF Mono", 12), text_color=WARNING,
+            font=("Consolas", 12), text_color=WARNING,
             anchor="w"
         )
         self.status_label.pack(fill="x", padx=22, pady=(14, 8))
@@ -458,7 +442,6 @@ class App(ctk.CTk):
         settings_card = GlassCard(left)
         settings_card.pack(fill="x", pady=(0, 14))
 
-        # Длительность
         self._add_slider_row(
             settings_card, "Длительность",
             5, 120, 10, self._update_duration_label
@@ -466,7 +449,6 @@ class App(ctk.CTk):
         self.duration_slider = settings_card._last_slider
         self.duration_label = settings_card._last_value_label
 
-        # Креативность
         self._add_slider_row(
             settings_card, "Креативность",
             0.5, 2.0, 1.0, self._update_temp_label
@@ -474,7 +456,6 @@ class App(ctk.CTk):
         self.temp_slider = settings_card._last_slider
         self.temp_label = settings_card._last_value_label
 
-        # Точность промпта
         self._add_slider_row(
             settings_card, "Точность промпта",
             1.0, 10.0, 3.0, self._update_guidance_label
@@ -482,7 +463,6 @@ class App(ctk.CTk):
         self.guidance_slider = settings_card._last_slider
         self.guidance_label = settings_card._last_value_label
 
-        # Лицензиат + seed
         row = ctk.CTkFrame(settings_card, fg_color="transparent")
         row.pack(fill="x", padx=22, pady=(0, 18))
 
@@ -514,7 +494,7 @@ class App(ctk.CTk):
         # ===== КНОПКА GENERATE =====
         self.generate_btn = iOSButton(
             left, text="Сгенерировать трек",
-            height=58, base_height=58, corner_radius=18,
+            base_height=58, corner_radius=18,
             font=("Segoe UI Variable Display", 17, "bold"),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
             text_color=TEXT_ON_ACCENT,
@@ -545,7 +525,7 @@ class App(ctk.CTk):
         self.result_text = ctk.CTkLabel(
             result_card,
             text="Пока пусто. Нажми «Сгенерировать трек».",
-            font=("SF Mono", 11), text_color=TEXT_DIM,
+            font=("Consolas", 11), text_color=TEXT_DIM,
             wraplength=640, justify="left"
         )
         self.result_text.pack(anchor="w", padx=22, pady=(0, 10))
@@ -569,7 +549,7 @@ class App(ctk.CTk):
         )
         self.open_btn.pack(side="left")
 
-        # ===== ИСТОРИЯ (правая колонка) =====
+        # ===== ИСТОРИЯ =====
         ctk.CTkLabel(
             right, text="История",
             font=("Segoe UI Variable Display", 18, "bold"),
@@ -619,7 +599,6 @@ class App(ctk.CTk):
 
     # ===== АНИМАЦИИ =====
     def _pulse_status(self):
-        """Пульсация цвета статуса пока модель грузится."""
         if self.model_loaded:
             return
         self._pulse_state = not self._pulse_state
@@ -630,11 +609,10 @@ class App(ctk.CTk):
         self.after(700, self._pulse_status)
 
     def _animate_wave(self, audio):
-        """Плавная отрисовка волны слева направо."""
         if self._wave_fig is None:
             return
         total_steps = 15
-        step_size = len(audio) // total_steps
+        step_size = max(1, len(audio) // total_steps)
 
         def draw_step(step):
             if self._wave_fig is None:
@@ -654,10 +632,8 @@ class App(ctk.CTk):
         draw_step(0)
 
     def _fade_in_history_item(self, item_frame, opacity=0.0):
-        """Плавное появление элемента истории."""
         target = 1.0
         new_opacity = min(target, opacity + 0.15)
-        # имитация fade-in через изменение цвета текста
         for child in item_frame.winfo_children():
             if isinstance(child, ctk.CTkLabel):
                 base_color = child.cget("text_color")
@@ -851,7 +827,6 @@ class App(ctk.CTk):
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=14, pady=14)
         self._wave_canvas = canvas
 
-        # Анимированная отрисовка
         self._animate_wave(audio)
 
     def _toggle_play(self):
