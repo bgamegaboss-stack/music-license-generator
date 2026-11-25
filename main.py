@@ -12,6 +12,7 @@ import zipfile
 import numpy as np
 import customtkinter as ctk
 import sounddevice as sd
+from scipy.signal import butter, lfilter
 
 # Рабочая папка
 if getattr(sys, 'frozen', False):
@@ -27,13 +28,11 @@ ctk.set_default_color_theme("blue")
 # Цветовая палитра Aegis Audio
 ACCENT = "#00E5FF"
 ACCENT_HOVER = "#00B8D4"
-ACCENT_GRADIENT = "#7C4DFF"
 BG_APP = "#0A0A0F"
 BG_CARD = "#15151F"
 BG_CARD_HOVER = "#1E1E2E"
 TEXT_PRIMARY = "#FFFFFF"
 TEXT_DIM = "#6B7280"
-TEXT_SUCCESS = "#10B981"
 TEXT_WARNING = "#F59E0B"
 
 PRESETS = {
@@ -41,7 +40,7 @@ PRESETS = {
     "Cyberpunk": "cyberpunk industrial techno, distorted bass, glitchy percussion",
     "Epic Orchestral": "epic cinematic orchestral trailer music, brass, choir, timpani",
     "Lo-fi Chill": "lo-fi hip hop beat, warm vinyl crackle, mellow piano, chill",
-    "Trap": "modern trap beat, 808 bass, hi-hats, dark melodic piano",
+    "Trap": "aggressive drill trap instrumental, distorted 808 sub-bass sliding notes, rapid triplet hi-hats rolls, dark minor key melody, crisp snare hits, high fidelity production, studio quality mix",
     "Ambient": "ambient space drone, ethereal pads, slow evolving textures",
     "Dark Cinematic": "dark cinematic tension, low strings, ominous atmosphere",
     "Electronic": "upbeat electronic dance music, energetic synths, driving beat",
@@ -66,7 +65,6 @@ class MusicLicenseGenerator:
         """Генерирует один чанк аудио"""
         inputs = self.processor(text=[prompt], padding=True, return_tensors="pt")
         
-        # Устанавливаем seed для воспроизводимости
         if seed is not None:
             torch.manual_seed(seed)
             np.random.seed(seed)
@@ -89,17 +87,15 @@ class MusicLicenseGenerator:
         """Генерирует аудио, для длинных треков использует чанки"""
         self.status("🎵 Генерация аудио...")
         
-        CHUNK_DURATION = 15  # секунд на чанк
-        CROSSFADE_DURATION = 2  # секунд crossfade
+        CHUNK_DURATION = 15
+        CROSSFADE_DURATION = 2
         
         if duration <= CHUNK_DURATION:
-            # Короткий трек — одна генерация
             self.progress(10)
             audio = self.generate_chunk(prompt, duration, seed)
             self.progress(90)
             return audio
         else:
-            # Длинный трек — чанковая генерация
             num_chunks = int(np.ceil(duration / CHUNK_DURATION))
             chunks = []
             
@@ -107,12 +103,10 @@ class MusicLicenseGenerator:
                 self.progress(int((i / num_chunks) * 80) + 10)
                 self.status(f"🎵 Генерация чанка {i+1}/{num_chunks}...")
                 
-                # Для воспроизводимости используем seed + номер чанка
                 chunk_seed = (seed + i) if seed is not None else None
                 chunk = self.generate_chunk(prompt, CHUNK_DURATION, chunk_seed)
                 chunks.append(chunk)
             
-            # Склеиваем чанки с crossfade
             self.status("🔗 Склейка чанков...")
             self.progress(90)
             
@@ -121,22 +115,18 @@ class MusicLicenseGenerator:
             
             result = chunks[0]
             for i in range(1, len(chunks)):
-                # Создаем crossfade
                 fade_out = np.linspace(1.0, 0.0, crossfade_samples)
                 fade_in = np.linspace(0.0, 1.0, crossfade_samples)
                 
-                # Обрезаем конец предыдущего чанка и начало текущего
                 result_end = result[-crossfade_samples:] * fade_out
                 chunk_start = chunks[i][:crossfade_samples] * fade_in
                 
-                # Склеиваем
                 result = np.concatenate([
                     result[:-crossfade_samples],
                     result_end + chunk_start,
                     chunks[i][crossfade_samples:]
                 ])
             
-            # Обрезаем до нужной длительности
             target_samples = int(duration * sample_rate)
             if len(result) > target_samples:
                 result = result[:target_samples]
@@ -145,6 +135,18 @@ class MusicLicenseGenerator:
 
     @staticmethod
     def save_wav(audio, samplerate=32000):
+        # 1. Нормализация громкости (Peak Normalization)
+        peak = np.max(np.abs(audio))
+        if peak > 0:
+            audio = audio / peak * 0.95
+            
+        # 2. High-Pass Filter (убираем низкочастотный гул ниже 30Hz)
+        b, a = butter(4, 30 / (samplerate / 2), btype='highpass')
+        audio = lfilter(b, a, audio)
+        
+        # 3. Soft Clipping (делает звук плотнее, убирает резкие цифровые искажения)
+        audio = np.tanh(audio * 1.3) / np.tanh(1.3)
+        
         filename = f"track_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
         sf.write(filename, audio, samplerate=samplerate, subtype='PCM_16')
         return filename
@@ -234,7 +236,6 @@ class App(ctk.CTk):
     def _build_ui(self):
         self.configure(fg_color=BG_APP)
 
-        # Шапка с градиентом
         header = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0)
         header.pack(fill="x")
 
@@ -252,7 +253,6 @@ class App(ctk.CTk):
             text_color=TEXT_DIM,
         ).pack(anchor="w", padx=24, pady=(0, 16))
 
-        # Статус и прогресс
         status_frame = ctk.CTkFrame(self, fg_color="transparent")
         status_frame.pack(fill="x", padx=24, pady=(16, 8))
 
@@ -267,7 +267,6 @@ class App(ctk.CTk):
         self.progress_bar.pack(padx=24, pady=(0, 12))
         self.progress_bar.set(0)
 
-        # Карточка "Промпт"
         card_prompt = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
         card_prompt.pack(fill="x", padx=24, pady=(0, 12))
 
@@ -282,9 +281,8 @@ class App(ctk.CTk):
             fg_color=BG_CARD_HOVER
         )
         self.prompt_box.pack(fill="x", padx=20, pady=(0, 12))
-        self.prompt_box.insert("1.0", "dark synthwave chase scene, heavy bass, 120 bpm")
+        self.prompt_box.insert("1.0", "aggressive drill trap instrumental, distorted 808 sub-bass sliding notes, rapid triplet hi-hats rolls, dark minor key melody, crisp snare hits, high fidelity production, studio quality mix")
 
-        # Пресеты
         chips_frame = ctk.CTkFrame(card_prompt, fg_color="transparent")
         chips_frame.pack(fill="x", padx=20, pady=(0, 16))
 
@@ -297,11 +295,9 @@ class App(ctk.CTk):
             )
             chip.pack(side="left", padx=(0, 6))
 
-        # Карточка "Настройки"
         card_settings = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
         card_settings.pack(fill="x", padx=24, pady=(0, 12))
 
-        # Длительность
         row1 = ctk.CTkFrame(card_settings, fg_color="transparent")
         row1.pack(fill="x", padx=20, pady=(16, 10))
 
@@ -317,7 +313,6 @@ class App(ctk.CTk):
         )
         self.duration_label.pack(side="left")
 
-        # Имя лицензиата
         row2 = ctk.CTkFrame(card_settings, fg_color="transparent")
         row2.pack(fill="x", padx=20, pady=(0, 10))
 
@@ -328,7 +323,6 @@ class App(ctk.CTk):
         )
         self.user_entry.pack(side="left", padx=12)
 
-        # Seed для воспроизводимости
         row3 = ctk.CTkFrame(card_settings, fg_color="transparent")
         row3.pack(fill="x", padx=20, pady=(0, 16))
 
@@ -349,7 +343,6 @@ class App(ctk.CTk):
 
         self.seed_var.trace("w", lambda *args: self._toggle_seed())
 
-        # Кнопка GENERATE
         self.generate_btn = ctk.CTkButton(
             self, text="⚡  GENERATE TRACK",
             height=56, corner_radius=14,
@@ -360,7 +353,6 @@ class App(ctk.CTk):
         )
         self.generate_btn.pack(fill="x", padx=24, pady=(0, 12))
 
-        # Карточка результата
         self.result_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
         self.result_card.pack(fill="x", padx=24, pady=(0, 20))
 
