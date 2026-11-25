@@ -7,3 +7,4 @@ customtkinter
 sounddevice
 pyinstaller
 scipy
+matplotlib
