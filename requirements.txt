@@ -6,3 +6,4 @@ numpy
 customtkinter
 sounddevice
 pyinstaller
+scipy
