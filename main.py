@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import traceback
+import random
 from datetime import datetime
 from fpdf import FPDF
 import zipfile
@@ -13,6 +14,8 @@ import numpy as np
 import customtkinter as ctk
 import sounddevice as sd
 from scipy.signal import butter, lfilter
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # Рабочая папка
 if getattr(sys, 'frozen', False):
@@ -25,15 +28,19 @@ os.chdir(script_dir)
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# Цветовая палитра Aegis Audio
+# Цветовая палитра Aegis Audio Premium
 ACCENT = "#00E5FF"
 ACCENT_HOVER = "#00B8D4"
+ACCENT_GRADIENT = "#7C4DFF"
 BG_APP = "#0A0A0F"
 BG_CARD = "#15151F"
 BG_CARD_HOVER = "#1E1E2E"
+BG_SIDEBAR = "#0F0F18"
 TEXT_PRIMARY = "#FFFFFF"
 TEXT_DIM = "#6B7280"
+TEXT_SUCCESS = "#10B981"
 TEXT_WARNING = "#F59E0B"
+TEXT_ERROR = "#EF4444"
 
 PRESETS = {
     "Synthwave": "dark synthwave chase scene, heavy bass, 120 bpm, retro analog synths",
@@ -45,6 +52,17 @@ PRESETS = {
     "Dark Cinematic": "dark cinematic tension, low strings, ominous atmosphere",
     "Electronic": "upbeat electronic dance music, energetic synths, driving beat",
 }
+
+RANDOM_PROMPTS = [
+    "mysterious underwater exploration theme, deep sub-bass, echoing sonar pings, ethereal pads",
+    "high-speed racing game soundtrack, adrenaline-pumping electronic rock, distorted guitars, fast tempo",
+    "medieval fantasy tavern music, lute, flute, cheerful folk melody, acoustic instruments",
+    "horror game ambient, unsettling drones, distant whispers, creaking sounds, psychological tension",
+    "retro 8-bit platformer music, chiptune synths, upbeat melody, nostalgic video game feel",
+    "jazz noir detective theme, smoky saxophone, upright bass, brushed drums, moody atmosphere",
+    "epic boss battle music, powerful orchestral hits, choir chanting, dramatic brass fanfare",
+    "peaceful meditation music, singing bowls, nature sounds, gentle wind chimes, zen atmosphere",
+]
 
 
 class MusicLicenseGenerator:
@@ -61,8 +79,8 @@ class MusicLicenseGenerator:
         self.model.eval()
         self.status("✓ Модель готова")
 
-    def generate_chunk(self, prompt, duration, seed=None):
-        """Генерирует один чанк аудио"""
+    def generate_chunk(self, prompt, duration, seed=None, temperature=1.0, guidance_scale=3.0):
+        """Генерирует один чанк аудио с настройками"""
         inputs = self.processor(text=[prompt], padding=True, return_tensors="pt")
         
         if seed is not None:
@@ -74,7 +92,8 @@ class MusicLicenseGenerator:
                 **inputs, 
                 max_new_tokens=int(duration * 50),
                 do_sample=True,
-                temperature=1.0,
+                temperature=temperature,
+                guidance_scale=guidance_scale,
             )
         
         audio = audio_values[0].cpu().numpy().squeeze(0)
@@ -83,16 +102,16 @@ class MusicLicenseGenerator:
             audio = audio / max_val
         return audio
 
-    def generate(self, prompt, duration=10, seed=None):
-        """Генерирует аудио, для длинных треков использует чанки"""
+    def generate(self, prompt, duration=10, seed=None, temperature=1.0, guidance_scale=3.0):
+        """Генерирует аудио с расширенными настройками"""
         self.status("🎵 Генерация аудио...")
         
-        CHUNK_DURATION = 15
+        CHUNK_DURATION = 30
         CROSSFADE_DURATION = 2
         
         if duration <= CHUNK_DURATION:
             self.progress(10)
-            audio = self.generate_chunk(prompt, duration, seed)
+            audio = self.generate_chunk(prompt, duration, seed, temperature, guidance_scale)
             self.progress(90)
             return audio
         else:
@@ -104,7 +123,7 @@ class MusicLicenseGenerator:
                 self.status(f"🎵 Генерация чанка {i+1}/{num_chunks}...")
                 
                 chunk_seed = (seed + i) if seed is not None else None
-                chunk = self.generate_chunk(prompt, CHUNK_DURATION, chunk_seed)
+                chunk = self.generate_chunk(prompt, CHUNK_DURATION, chunk_seed, temperature, guidance_scale)
                 chunks.append(chunk)
             
             self.status("🔗 Склейка чанков...")
@@ -135,16 +154,13 @@ class MusicLicenseGenerator:
 
     @staticmethod
     def save_wav(audio, samplerate=32000):
-        # 1. Нормализация громкости (Peak Normalization)
         peak = np.max(np.abs(audio))
         if peak > 0:
             audio = audio / peak * 0.95
             
-        # 2. High-Pass Filter (убираем низкочастотный гул ниже 30Hz)
         b, a = butter(4, 30 / (samplerate / 2), btype='highpass')
         audio = lfilter(b, a, audio)
         
-        # 3. Soft Clipping (делает звук плотнее, убирает резкие цифровые искажения)
         audio = np.tanh(audio * 1.3) / np.tanh(1.3)
         
         filename = f"track_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
@@ -212,8 +228,8 @@ Issued by: Aegis Audio"""
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("AEGIS AUDIO | Royalty-Free AI Generator")
-        self.geometry("760x900")
+        self.title("AEGIS AUDIO | Premium AI Generator")
+        self.geometry("1000x900")
         self.resizable(False, False)
 
         try:
@@ -229,6 +245,8 @@ class App(ctk.CTk):
         self.current_audio = None
         self.current_sr = 32000
         self.is_playing = False
+        self.track_count = 0
+        self.history = []
 
         self._build_ui()
         threading.Thread(target=self._load_model, daemon=True).start()
@@ -236,25 +254,53 @@ class App(ctk.CTk):
     def _build_ui(self):
         self.configure(fg_color=BG_APP)
 
-        header = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0)
-        header.pack(fill="x")
+        # Главный контейнер с двумя колонками
+        main_container = ctk.CTkFrame(self, fg_color="transparent")
+        main_container.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Левая колонка (основной интерфейс)
+        left_panel = ctk.CTkFrame(main_container, fg_color="transparent", width=650)
+        left_panel.pack(side="left", fill="both", expand=True)
+
+        # Правая колонка (история)
+        right_panel = ctk.CTkFrame(main_container, fg_color=BG_SIDEBAR, width=300, corner_radius=16)
+        right_panel.pack(side="right", fill="y", padx=(10, 0))
+
+        # ===== ЛЕВАЯ ПАНЕЛЬ =====
+        
+        # Шапка
+        header = ctk.CTkFrame(left_panel, fg_color=BG_CARD, corner_radius=16)
+        header.pack(fill="x", pady=(0, 12))
+
+        title_frame = ctk.CTkFrame(header, fg_color="transparent")
+        title_frame.pack(fill="x", padx=20, pady=(16, 8))
 
         ctk.CTkLabel(
-            header,
+            title_frame,
             text="🛡️  AEGIS AUDIO",
-            font=("Segoe UI", 26, "bold"),
+            font=("Segoe UI", 28, "bold"),
             text_color=ACCENT,
-        ).pack(anchor="w", padx=24, pady=(16, 4))
+        ).pack(side="left")
+
+        # Счетчик треков
+        self.counter_label = ctk.CTkLabel(
+            title_frame,
+            text="Треков: 0",
+            font=("Segoe UI", 12),
+            text_color=TEXT_DIM,
+        )
+        self.counter_label.pack(side="right", pady=8)
 
         ctk.CTkLabel(
             header,
             text="Royalty-free AI audio with built-in legal protection",
             font=("Segoe UI", 12),
             text_color=TEXT_DIM,
-        ).pack(anchor="w", padx=24, pady=(0, 16))
+        ).pack(anchor="w", padx=20, pady=(0, 16))
 
-        status_frame = ctk.CTkFrame(self, fg_color="transparent")
-        status_frame.pack(fill="x", padx=24, pady=(16, 8))
+        # Статус и прогресс
+        status_frame = ctk.CTkFrame(left_panel, fg_color="transparent")
+        status_frame.pack(fill="x", pady=(0, 8))
 
         self.status_label = ctk.CTkLabel(
             status_frame, text="Инициализация...",
@@ -263,17 +309,30 @@ class App(ctk.CTk):
         )
         self.status_label.pack(fill="x")
 
-        self.progress_bar = ctk.CTkProgressBar(self, width=712, height=8)
-        self.progress_bar.pack(padx=24, pady=(0, 12))
+        self.progress_bar = ctk.CTkProgressBar(left_panel, width=650, height=10, corner_radius=5)
+        self.progress_bar.pack(pady=(0, 12))
         self.progress_bar.set(0)
 
-        card_prompt = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
-        card_prompt.pack(fill="x", padx=24, pady=(0, 12))
+        # Карточка "Промпт"
+        card_prompt = ctk.CTkFrame(left_panel, fg_color=BG_CARD, corner_radius=16)
+        card_prompt.pack(fill="x", pady=(0, 12))
+
+        prompt_header = ctk.CTkFrame(card_prompt, fg_color="transparent")
+        prompt_header.pack(fill="x", padx=20, pady=(16, 8))
 
         ctk.CTkLabel(
-            card_prompt, text="ОПИСАНИЕ МУЗЫКИ",
+            prompt_header, text="ОПИСАНИЕ МУЗЫКИ",
             font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM
-        ).pack(anchor="w", padx=20, pady=(16, 8))
+        ).pack(side="left")
+
+        # Кнопка случайного промпта
+        random_btn = ctk.CTkButton(
+            prompt_header, text="🎲 Случайный", width=120, height=28,
+            corner_radius=14, fg_color=BG_CARD_HOVER, hover_color="#2A2A3E",
+            font=("Segoe UI", 10),
+            command=self._random_prompt
+        )
+        random_btn.pack(side="right")
 
         self.prompt_box = ctk.CTkTextbox(
             card_prompt, height=100, corner_radius=12,
@@ -283,6 +342,7 @@ class App(ctk.CTk):
         self.prompt_box.pack(fill="x", padx=20, pady=(0, 12))
         self.prompt_box.insert("1.0", "aggressive drill trap instrumental, distorted 808 sub-bass sliding notes, rapid triplet hi-hats rolls, dark minor key melody, crisp snare hits, high fidelity production, studio quality mix")
 
+        # Пресеты
         chips_frame = ctk.CTkFrame(card_prompt, fg_color="transparent")
         chips_frame.pack(fill="x", padx=20, pady=(0, 16))
 
@@ -295,15 +355,17 @@ class App(ctk.CTk):
             )
             chip.pack(side="left", padx=(0, 6))
 
-        card_settings = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
-        card_settings.pack(fill="x", padx=24, pady=(0, 12))
+        # Карточка "Настройки"
+        card_settings = ctk.CTkFrame(left_panel, fg_color=BG_CARD, corner_radius=16)
+        card_settings.pack(fill="x", pady=(0, 12))
 
+        # Длительность
         row1 = ctk.CTkFrame(card_settings, fg_color="transparent")
         row1.pack(fill="x", padx=20, pady=(16, 10))
 
-        ctk.CTkLabel(row1, text="Длительность:", font=("Segoe UI", 12)).pack(side="left")
+        ctk.CTkLabel(row1, text="⏱️ Длительность:", font=("Segoe UI", 12)).pack(side="left")
         self.duration_slider = ctk.CTkSlider(
-            row1, from_=5, to=120, number_of_steps=115, width=340,
+            row1, from_=5, to=120, number_of_steps=115, width=280,
             command=self._update_duration_label
         )
         self.duration_slider.set(10)
@@ -313,48 +375,91 @@ class App(ctk.CTk):
         )
         self.duration_label.pack(side="left")
 
+        # Temperature
         row2 = ctk.CTkFrame(card_settings, fg_color="transparent")
         row2.pack(fill="x", padx=20, pady=(0, 10))
 
-        ctk.CTkLabel(row2, text="Имя лицензиата:", font=("Segoe UI", 12)).pack(side="left")
+        ctk.CTkLabel(row2, text="🎨 Креативность:", font=("Segoe UI", 12)).pack(side="left")
+        self.temp_slider = ctk.CTkSlider(
+            row2, from_=0.5, to=2.0, number_of_steps=15, width=280,
+            command=self._update_temp_label
+        )
+        self.temp_slider.set(1.0)
+        self.temp_slider.pack(side="left", padx=12)
+        self.temp_label = ctk.CTkLabel(
+            row2, text="1.0", font=("Segoe UI", 12, "bold"), text_color=ACCENT
+        )
+        self.temp_label.pack(side="left")
+
+        # Guidance Scale
+        row3 = ctk.CTkFrame(card_settings, fg_color="transparent")
+        row3.pack(fill="x", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(row3, text="🎯 Точность промпта:", font=("Segoe UI", 12)).pack(side="left")
+        self.guidance_slider = ctk.CTkSlider(
+            row3, from_=1.0, to=10.0, number_of_steps=18, width=280,
+            command=self._update_guidance_label
+        )
+        self.guidance_slider.set(3.0)
+        self.guidance_slider.pack(side="left", padx=12)
+        self.guidance_label = ctk.CTkLabel(
+            row3, text="3.0", font=("Segoe UI", 12, "bold"), text_color=ACCENT
+        )
+        self.guidance_label.pack(side="left")
+
+        # Имя лицензиата и Seed
+        row4 = ctk.CTkFrame(card_settings, fg_color="transparent")
+        row4.pack(fill="x", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(row4, text="👤 Лицензиат:", font=("Segoe UI", 12)).pack(side="left")
         self.user_entry = ctk.CTkEntry(
-            row2, width=260, placeholder_text="User",
+            row4, width=200, placeholder_text="User",
             fg_color=BG_CARD_HOVER
         )
         self.user_entry.pack(side="left", padx=12)
 
-        row3 = ctk.CTkFrame(card_settings, fg_color="transparent")
-        row3.pack(fill="x", padx=20, pady=(0, 16))
-
         self.seed_var = ctk.BooleanVar(value=False)
         self.seed_check = ctk.CTkCheckBox(
-            row3, text="Фиксированный seed",
+            row4, text="🎲 Фикс. seed",
             variable=self.seed_var,
             font=("Segoe UI", 11),
             fg_color=BG_CARD_HOVER
         )
-        self.seed_check.pack(side="left")
+        self.seed_check.pack(side="left", padx=(20, 0))
 
         self.seed_entry = ctk.CTkEntry(
-            row3, width=120, placeholder_text="Seed (число)",
+            row4, width=100, placeholder_text="42",
             fg_color=BG_CARD_HOVER, state="disabled"
         )
         self.seed_entry.pack(side="left", padx=12)
 
         self.seed_var.trace("w", lambda *args: self._toggle_seed())
 
+        # Кнопка GENERATE
         self.generate_btn = ctk.CTkButton(
-            self, text="⚡  GENERATE TRACK",
-            height=56, corner_radius=14,
-            font=("Segoe UI", 16, "bold"),
+            left_panel, text="⚡  GENERATE TRACK",
+            height=60, corner_radius=16,
+            font=("Segoe UI", 18, "bold"),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
             text_color="#000000",
             command=self._on_generate
         )
-        self.generate_btn.pack(fill="x", padx=24, pady=(0, 12))
+        self.generate_btn.pack(fill="x", pady=(0, 12))
 
-        self.result_card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
-        self.result_card.pack(fill="x", padx=24, pady=(0, 20))
+        # Визуализация волны
+        self.waveframe = ctk.CTkFrame(left_panel, fg_color=BG_CARD, corner_radius=16, height=120)
+        self.waveframe.pack(fill="x", pady=(0, 12))
+        self.waveframe.pack_propagate(False)
+        
+        self.wave_label = ctk.CTkLabel(
+            self.waveframe, text="Визуализация появится после генерации",
+            font=("Segoe UI", 11), text_color=TEXT_DIM
+        )
+        self.wave_label.pack(expand=True)
+
+        # Карточка результата
+        self.result_card = ctk.CTkFrame(left_panel, fg_color=BG_CARD, corner_radius=16)
+        self.result_card.pack(fill="x", pady=(0, 12))
 
         ctk.CTkLabel(
             self.result_card, text="РЕЗУЛЬТАТ",
@@ -365,7 +470,7 @@ class App(ctk.CTk):
             self.result_card,
             text="Пока пусто. Нажми GENERATE.",
             font=("Consolas", 11), text_color=TEXT_DIM,
-            wraplength=680, justify="left"
+            wraplength=600, justify="left"
         )
         self.result_text.pack(anchor="w", padx=20, pady=(0, 12))
 
@@ -386,9 +491,31 @@ class App(ctk.CTk):
         )
         self.open_btn.pack(side="left")
 
+        # ===== ПРАВАЯ ПАНЕЛЬ (ИСТОРИЯ) =====
+        
+        ctk.CTkLabel(
+            right_panel, text="📜 ИСТОРИЯ",
+            font=("Segoe UI", 14, "bold"), text_color=TEXT_PRIMARY
+        ).pack(anchor="w", padx=20, pady=(16, 12))
+
+        self.history_frame = ctk.CTkFrame(right_panel, fg_color="transparent")
+        self.history_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+        self.history_label = ctk.CTkLabel(
+            self.history_frame, text="Здесь будут последние треки",
+            font=("Segoe UI", 11), text_color=TEXT_DIM,
+            wraplength=260
+        )
+        self.history_label.pack(expand=True)
+
+    def _random_prompt(self):
+        prompt = random.choice(RANDOM_PROMPTS)
+        self._set_prompt(prompt)
+
     def _toggle_seed(self):
         if self.seed_var.get():
             self.seed_entry.configure(state="normal")
+            self.seed_entry.delete(0, "end")
             self.seed_entry.insert(0, "42")
         else:
             self.seed_entry.configure(state="disabled")
@@ -406,6 +533,12 @@ class App(ctk.CTk):
             self.duration_label.configure(text=f"{mins} мин {secs} сек")
         else:
             self.duration_label.configure(text=f"{val} сек")
+
+    def _update_temp_label(self, value):
+        self.temp_label.configure(text=f"{float(value):.1f}")
+
+    def _update_guidance_label(self, value):
+        self.guidance_label.configure(text=f"{float(value):.1f}")
 
     def set_status(self, msg):
         self.status_label.configure(text=msg)
@@ -434,6 +567,8 @@ class App(ctk.CTk):
 
         duration = int(self.duration_slider.get())
         user_name = self.user_entry.get().strip() or "User"
+        temperature = float(self.temp_slider.get())
+        guidance_scale = float(self.guidance_slider.get())
         
         seed = None
         if self.seed_var.get():
@@ -450,13 +585,13 @@ class App(ctk.CTk):
 
         threading.Thread(
             target=self._generate_worker,
-            args=(prompt, duration, user_name, seed),
+            args=(prompt, duration, user_name, seed, temperature, guidance_scale),
             daemon=True
         ).start()
 
-    def _generate_worker(self, prompt, duration, user_name, seed):
+    def _generate_worker(self, prompt, duration, user_name, seed, temperature, guidance_scale):
         try:
-            audio = self.generator.generate(prompt, duration, seed)
+            audio = self.generator.generate(prompt, duration, seed, temperature, guidance_scale)
             self.current_audio = audio
 
             wav = self.generator.save_wav(audio)
@@ -464,24 +599,41 @@ class App(ctk.CTk):
             pdf = self.generator.generate_license_pdf(wav, file_hash, user_name)
             zip_file = self.generator.create_package(wav, pdf)
 
+            self.track_count += 1
+
             duration_str = f"{duration // 60} мин {duration % 60} сек" if duration >= 60 else f"{duration} сек"
             info = (
                 f"✅ Пакет: {zip_file}\n"
                 f"⏱️ Длительность: {duration_str}\n"
                 f"👤 Лицензиат: {user_name}\n"
+                f"🎨 Temp: {temperature:.1f} | 🎯 Guidance: {guidance_scale:.1f}\n"
                 f"🔐 SHA-256: {file_hash[:32]}...\n"
                 f"📦 Размер: {os.path.getsize(zip_file) // 1024} КБ"
             )
             if seed is not None:
                 info += f"\n🎲 Seed: {seed}"
 
+            # Добавляем в историю
+            history_entry = {
+                "time": datetime.now().strftime("%H:%M"),
+                "prompt": prompt[:50] + "..." if len(prompt) > 50 else prompt,
+                "duration": duration_str,
+                "file": zip_file
+            }
+            self.history.insert(0, history_entry)
+            if len(self.history) > 5:
+                self.history.pop()
+
             def done():
                 self.result_text.configure(text=info, text_color=TEXT_PRIMARY)
                 self.generate_btn.configure(state="normal", text="⚡  GENERATE TRACK")
                 self.play_btn.configure(state="normal")
                 self.open_btn.configure(state="normal")
+                self.counter_label.configure(text=f"Треков: {self.track_count}")
                 self.set_status("✓ Трек и лицензия готовы")
                 self.set_progress(100)
+                self._update_history()
+                self._draw_waveform(audio)
 
             self.after(0, done)
         except Exception as e:
@@ -490,6 +642,56 @@ class App(ctk.CTk):
                 self.set_status(f"✗ Ошибка: {e}")
                 print(traceback.format_exc())
             self.after(0, err)
+
+    def _update_history(self):
+        # Очищаем историю
+        for widget in self.history_frame.winfo_children():
+            widget.destroy()
+
+        if not self.history:
+            self.history_label.pack(expand=True)
+            return
+
+        for entry in self.history:
+            item_frame = ctk.CTkFrame(self.history_frame, fg_color=BG_CARD_HOVER, corner_radius=10)
+            item_frame.pack(fill="x", pady=(0, 6))
+
+            ctk.CTkLabel(
+                item_frame, text=f"🕐 {entry['time']}",
+                font=("Segoe UI", 10), text_color=TEXT_DIM
+            ).pack(anchor="w", padx=10, pady=(6, 0))
+
+            ctk.CTkLabel(
+                item_frame, text=entry['prompt'],
+                font=("Segoe UI", 10), text_color=TEXT_PRIMARY,
+                wraplength=240, justify="left"
+            ).pack(anchor="w", padx=10, pady=(2, 0))
+
+            ctk.CTkLabel(
+                item_frame, text=f"⏱️ {entry['duration']}",
+                font=("Segoe UI", 9), text_color=ACCENT
+            ).pack(anchor="w", padx=10, pady=(2, 6))
+
+    def _draw_waveform(self, audio):
+        # Удаляем старый график
+        for widget in self.waveframe.winfo_children():
+            widget.destroy()
+
+        # Создаем график
+        fig, ax = plt.subplots(figsize=(6, 2), dpi=80)
+        fig.patch.set_facecolor(BG_CARD)
+        ax.set_facecolor(BG_CARD)
+
+        # Рисуем волну
+        ax.plot(audio, color=ACCENT, linewidth=0.5)
+        ax.set_xlim(0, len(audio))
+        ax.set_ylim(-1.1, 1.1)
+        ax.axis('off')
+
+        # Встраиваем в tkinter
+        canvas = FigureCanvasTkAgg(fig, master=self.waveframe)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
     def _toggle_play(self):
         if self.current_audio is None:
