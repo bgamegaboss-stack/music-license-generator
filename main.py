@@ -24,17 +24,19 @@ else:
     script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
-# ===== iOS 26 Liquid Glass Theme =====
-ctk.set_appearance_mode("light")
+# ===== DARK THEME WITH WHITE ISLAND =====
+ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# iOS палитра
-BG_APP = "#F2F2F7"
-BG_GLASS = "#FFFFFF"
-BG_GLASS_HOVER = "#F9F9FB"
-BG_GLASS_ACTIVE = "#EBF3FF"
-BORDER = "#E5E5EA"
-BORDER_STRONG = "#D1D1D6"
+# Цветовая палитра
+BG_APP = "#000000"
+BG_CARD = "#1A1A1A"
+BG_CARD_HOVER = "#2A2A2A"
+BORDER = "#333333"
+
+ISLAND_BG = "#FFFFFF"
+ISLAND_TEXT = "#000000"
+ISLAND_DIM = "#666666"
 
 ACCENT = "#007AFF"
 ACCENT_HOVER = "#0066CC"
@@ -44,14 +46,9 @@ SUCCESS = "#34C759"
 WARNING = "#FF9500"
 DANGER = "#FF3B30"
 
-TEXT_PRIMARY = "#1C1C1E"
-TEXT_SECONDARY = "#3A3A3C"
-TEXT_DIM = "#8E8E93"
-TEXT_ON_ACCENT = "#FFFFFF"
-
-SLIDER_TRACK = "#E5E5EA"
-SLIDER_BUTTON = "#FFFFFF"
-SLIDER_BUTTON_HOVER = "#F2F2F7"
+TEXT_PRIMARY = "#FFFFFF"
+TEXT_SECONDARY = "#A0A0A0"
+TEXT_DIM = "#666666"
 
 SAMPLE_RATE = 32000
 NATIVE_CHUNK = 30
@@ -67,6 +64,30 @@ PRESETS = {
     "Ambient": "ambient space drone, ethereal pads, slow evolving textures",
     "Dark Cinematic": "dark cinematic tension, low strings, ominous atmosphere",
     "Electronic": "upbeat electronic dance music, energetic synths, driving beat",
+}
+
+# Библиотека звуковых эффектов (категории)
+SOUND_LIBRARY = {
+    "Басы": [
+        "deep 808 sub-bass, heavy low-end, rumbling",
+        "distorted bass guitar, aggressive low frequencies",
+        "synth bass, smooth analog warmth, pulsing",
+    ],
+    "Ударные": [
+        "crisp trap hi-hats, rapid triplet rolls, sharp",
+        "powerful kick drum, punchy, tight",
+        "snare hits, crisp, reverb tail",
+    ],
+    "Атмосфера": [
+        "ethereal pads, dreamy, floating",
+        "dark ambient drone, ominous, tension",
+        "vinyl crackle, warm, nostalgic",
+    ],
+    "Эффекты": [
+        "riser effect, building tension, white noise sweep",
+        "impact hit, cinematic boom, dramatic",
+        "glitch effects, digital artifacts, stutter",
+    ],
 }
 
 RANDOM_PROMPTS = [
@@ -268,20 +289,171 @@ Issued by: Aegis Audio"""
         return zip_filename
 
 
-class GlassCard(ctk.CTkFrame):
-    def __init__(self, master, **kwargs):
-        kwargs.setdefault('fg_color', BG_GLASS)
-        kwargs.setdefault('border_color', BORDER)
-        kwargs.setdefault('border_width', 1)
-        kwargs.setdefault('corner_radius', 22)
-        super().__init__(master, **kwargs)
+class DynamicIsland(ctk.CTkFrame):
+    """Dynamic Island - чёрный островок, который расширяется в белую панель."""
+    def __init__(self, master, app_instance, **kwargs):
+        super().__init__(master, fg_color="#000000", corner_radius=20, height=40, **kwargs)
+        self.app = app_instance
+        self.is_expanded = False
+        self.pack(fill="x", pady=(10, 0))
+        
+        # Маленький индикатор
+        self.indicator = ctk.CTkLabel(
+            self, text="●", font=("Segoe UI", 16), text_color="#FFFFFF"
+        )
+        self.indicator.pack(expand=True)
+        
+        # Клик для расширения
+        self.bind("<Button-1>", self._toggle)
+        self.indicator.bind("<Button-1>", self._toggle)
+        
+        # Большая панель (скрыта по умолчанию)
+        self.expanded_panel = None
 
+    def _toggle(self, event=None):
+        if self.is_expanded:
+            self._collapse()
+        else:
+            self._expand()
 
-class iOSButton(ctk.CTkButton):
-    """Кнопка без анимации hover — просто стильная кнопка."""
-    def __init__(self, master, **kwargs):
-        kwargs.setdefault('corner_radius', 14)
-        super().__init__(master, **kwargs)
+    def _expand(self):
+        self.is_expanded = True
+        self.configure(height=500, fg_color=ISLAND_BG, corner_radius=20)
+        self.indicator.pack_forget()
+        
+        # Создаём расширенную панель
+        self.expanded_panel = ctk.CTkFrame(self, fg_color="transparent")
+        self.expanded_panel.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Заголовок
+        header = ctk.CTkFrame(self.expanded_panel, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            header, text="ИИ-Ассистент",
+            font=("Segoe UI Variable Display", 20, "bold"),
+            text_color=ISLAND_TEXT
+        ).pack(side="left")
+        
+        ctk.CTkButton(
+            header, text="✕", width=30, height=30,
+            corner_radius=15, fg_color=BG_CARD_HOVER, hover_color=BG_CARD,
+            text_color=ISLAND_TEXT, font=("Segoe UI", 14),
+            command=self._collapse
+        ).pack(side="right")
+        
+        # Чат с ассистентом
+        chat_frame = ctk.CTkFrame(self.expanded_panel, fg_color=BG_CARD, corner_radius=12)
+        chat_frame.pack(fill="both", expand=True, pady=(0, 10))
+        
+        self.chat_display = ctk.CTkTextbox(
+            chat_frame, height=200, corner_radius=12,
+            font=("Segoe UI", 12), wrap="word",
+            fg_color=BG_CARD, text_color=ISLAND_TEXT
+        )
+        self.chat_display.pack(fill="both", expand=True, padx=10, pady=10)
+        self.chat_display.insert("1.0", "Привет! Я твой ИИ-ассистент. Напиши команду:\n• 'обрежь до 20 секунд'\n• 'добавь fade in'\n• 'сделай громче на 50%'\n• 'библиотека звуков'\n")
+        
+        # Поле ввода
+        input_frame = ctk.CTkFrame(self.expanded_panel, fg_color="transparent")
+        input_frame.pack(fill="x")
+        
+        self.chat_input = ctk.CTkEntry(
+            input_frame, placeholder_text="Напиши команду...",
+            fg_color=BG_CARD, border_color=BORDER, border_width=1,
+            corner_radius=10, text_color=ISLAND_TEXT
+        )
+        self.chat_input.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        ctk.CTkButton(
+            input_frame, text="Отправить", width=100, height=36,
+            corner_radius=10, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            text_color="#FFFFFF", font=("Segoe UI", 12),
+            command=self._process_command
+        ).pack(side="right")
+        
+        # Кнопка возврата
+        ctk.CTkButton(
+            self, text="Свернуть", height=30,
+            corner_radius=10, fg_color=BG_CARD_HOVER, hover_color=BG_CARD,
+            text_color=ISLAND_TEXT, font=("Segoe UI", 11),
+            command=self._collapse
+        ).pack(pady=(10, 0))
+
+    def _collapse(self):
+        self.is_expanded = False
+        self.configure(height=40, fg_color="#000000")
+        if self.expanded_panel:
+            self.expanded_panel.destroy()
+            self.expanded_panel = None
+        self.indicator.pack(expand=True)
+
+    def _process_command(self):
+        command = self.chat_input.get().strip().lower()
+        if not command:
+            return
+        
+        self.chat_input.delete(0, "end")
+        self.chat_display.insert("end", f"\nТы: {command}\n")
+        
+        # Обработка команд
+        response = self._handle_command(command)
+        self.chat_display.insert("end", f"Ассистент: {response}\n")
+        self.chat_display.see("end")
+
+    def _handle_command(self, command):
+        if not self.app.current_audio:
+            return "Сначала сгенерируй трек."
+        
+        if "обрежь" in command or "trim" in command:
+            # Извлекаем число секунд
+            import re
+            match = re.search(r'(\d+)', command)
+            if match:
+                seconds = int(match.group(1))
+                samples = seconds * SAMPLE_RATE
+                if len(self.app.current_audio) > samples:
+                    self.app.current_audio = self.app.current_audio[:samples]
+                    return f"✅ Обрезано до {seconds} секунд."
+                else:
+                    return f"Трек уже короче {seconds} секунд."
+            return "Не понял длительность. Напиши 'обрежь до 20 секунд'."
+        
+        elif "fade in" in command or "фейд ин" in command:
+            fade_samples = int(2 * SAMPLE_RATE)  # 2 секунды
+            fade_in = np.linspace(0.0, 1.0, fade_samples)
+            if len(self.app.current_audio) > fade_samples:
+                self.app.current_audio[:fade_samples] *= fade_in
+                return "✅ Fade in добавлен (2 сек)."
+            return "Трек слишком короткий."
+        
+        elif "fade out" in command or "фейд аут" in command:
+            fade_samples = int(2 * SAMPLE_RATE)
+            fade_out = np.linspace(1.0, 0.0, fade_samples)
+            if len(self.app.current_audio) > fade_samples:
+                self.app.current_audio[-fade_samples:] *= fade_out
+                return "✅ Fade out добавлен (2 сек)."
+            return "Трек слишком короткий."
+        
+        elif "громче" in command or "louder" in command:
+            match = re.search(r'(\d+)', command)
+            if match:
+                percent = int(match.group(1)) / 100.0
+                self.app.current_audio *= (1.0 + percent)
+                peak = np.max(np.abs(self.app.current_audio))
+                if peak > 1.0:
+                    self.app.current_audio /= peak
+                return f"✅ Громкость увеличена на {percent*100:.0f}%."
+            return "Напиши 'сделай громче на 50%'."
+        
+        elif "библиотека" in command or "звуки" in command:
+            return "Библиотека звуков:\n• Басы: 808, synth bass\n• Ударные: hi-hats, kick, snare\n• Атмосфера: pads, drone\n• Эффекты: riser, impact, glitch\n\nНапиши 'добавь басы' или 'добавь ударные'."
+        
+        elif "басы" in command or "bass" in command:
+            return "🎵 Генерация басовой линии... (это займёт время). Используй основной генератор с промптом 'deep 808 sub-bass'."
+        
+        else:
+            return "Не понял команду. Попробуй: 'обрежь до 20 сек', 'добавь fade in', 'сделай громче на 50%'."
 
 
 class App(ctk.CTk):
@@ -289,8 +461,9 @@ class App(ctk.CTk):
         super().__init__()
         self.title("Aegis Audio")
         self.geometry("1020x920")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.configure(fg_color=BG_APP)
+        self.is_fullscreen = False
 
         try:
             self.iconbitmap("app.ico")
@@ -318,18 +491,24 @@ class App(ctk.CTk):
         threading.Thread(target=self._load_model, daemon=True).start()
 
     def _build_ui(self):
+        # Dynamic Island сверху
+        self.island = DynamicIsland(self, self)
+
+        # Главный контейнер
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=24, pady=24)
 
         left = ctk.CTkFrame(main, fg_color="transparent")
         left.pack(side="left", fill="both", expand=True)
 
-        right = GlassCard(main, width=300)
+        right = ctk.CTkFrame(main, fg_color=BG_CARD, corner_radius=22,
+                             border_color=BORDER, border_width=1, width=300)
         right.pack(side="right", fill="y", padx=(16, 0))
         right.pack_propagate(False)
 
         # ===== ШАПКА =====
-        header = GlassCard(left)
+        header = ctk.CTkFrame(left, fg_color=BG_CARD, corner_radius=22,
+                              border_color=BORDER, border_width=1)
         header.pack(fill="x", pady=(0, 14))
 
         title_row = ctk.CTkFrame(header, fg_color="transparent")
@@ -340,6 +519,15 @@ class App(ctk.CTk):
             font=("Segoe UI Variable Display", 30, "bold"),
             text_color=TEXT_PRIMARY
         ).pack(side="left")
+
+        # Кнопка fullscreen
+        self.fs_btn = ctk.CTkButton(
+            title_row, text="⛶", width=40, height=30,
+            corner_radius=8, fg_color=BG_CARD_HOVER, hover_color=BORDER,
+            text_color=TEXT_PRIMARY, font=("Segoe UI", 14),
+            command=self._toggle_fullscreen
+        )
+        self.fs_btn.pack(side="right", padx=(0, 10))
 
         self.counter_label = ctk.CTkLabel(
             title_row, text="0 треков",
@@ -356,7 +544,8 @@ class App(ctk.CTk):
         ).pack(anchor="w", padx=22, pady=(0, 18))
 
         # ===== СТАТУС + ПРОГРЕСС =====
-        status_card = GlassCard(left)
+        status_card = ctk.CTkFrame(left, fg_color=BG_CARD, corner_radius=22,
+                                   border_color=BORDER, border_width=1)
         status_card.pack(fill="x", pady=(0, 14))
 
         self.status_label = ctk.CTkLabel(
@@ -368,13 +557,14 @@ class App(ctk.CTk):
 
         self.progress_bar = ctk.CTkProgressBar(
             status_card, height=6, corner_radius=3,
-            progress_color=ACCENT, fg_color=SLIDER_TRACK
+            progress_color=ACCENT, fg_color=BORDER
         )
         self.progress_bar.pack(fill="x", padx=22, pady=(0, 14))
         self.progress_bar.set(0)
 
         # ===== ПРОМПТ =====
-        prompt_card = GlassCard(left)
+        prompt_card = ctk.CTkFrame(left, fg_color=BG_CARD, corner_radius=22,
+                                   border_color=BORDER, border_width=1)
         prompt_card.pack(fill="x", pady=(0, 14))
 
         prompt_header = ctk.CTkFrame(prompt_card, fg_color="transparent")
@@ -389,7 +579,7 @@ class App(ctk.CTk):
             prompt_header, text="Случайный", width=110, height=28,
             corner_radius=14,
             font=("Segoe UI", 11),
-            fg_color=ACCENT_LIGHT, hover_color=BG_GLASS_ACTIVE,
+            fg_color=ACCENT_LIGHT, hover_color=ACCENT_HOVER,
             text_color=ACCENT,
             command=self._random_prompt
         ).pack(side="right")
@@ -397,7 +587,7 @@ class App(ctk.CTk):
         self.prompt_box = ctk.CTkTextbox(
             prompt_card, height=92, corner_radius=14,
             font=("Segoe UI", 13), wrap="word",
-            fg_color=BG_GLASS_HOVER, border_color=BORDER, border_width=1
+            fg_color=BG_CARD_HOVER, border_color=BORDER, border_width=1
         )
         self.prompt_box.pack(fill="x", padx=22, pady=(0, 10))
         self.prompt_box.insert("1.0", PRESETS["Trap"])
@@ -409,14 +599,15 @@ class App(ctk.CTk):
             ctk.CTkButton(
                 chips_frame, text=name, width=100, height=30,
                 corner_radius=15,
-                fg_color=BG_GLASS_HOVER, hover_color=BG_GLASS_ACTIVE,
+                fg_color=BG_CARD_HOVER, hover_color=BORDER,
                 text_color=TEXT_SECONDARY,
                 font=("Segoe UI", 11),
                 command=lambda t=text: self._set_prompt(t)
             ).pack(side="left", padx=(0, 6))
 
         # ===== НАСТРОЙКИ =====
-        settings_card = GlassCard(left)
+        settings_card = ctk.CTkFrame(left, fg_color=BG_CARD, corner_radius=22,
+                                     border_color=BORDER, border_width=1)
         settings_card.pack(fill="x", pady=(0, 14))
 
         self._add_slider_row(
@@ -446,7 +637,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(row, text="Лицензиат", font=("Segoe UI", 12)).pack(side="left")
         self.user_entry = ctk.CTkEntry(
             row, width=200, placeholder_text="User",
-            fg_color=BG_GLASS_HOVER, border_color=BORDER, border_width=1,
+            fg_color=BG_CARD_HOVER, border_color=BORDER, border_width=1,
             corner_radius=10
         )
         self.user_entry.pack(side="left", padx=12)
@@ -456,14 +647,14 @@ class App(ctk.CTk):
             row, text="Фикс. seed", variable=self.seed_var,
             font=("Segoe UI", 11),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
-            checkmark_color=TEXT_ON_ACCENT,
-            border_color=BORDER_STRONG
+            checkmark_color="#FFFFFF",
+            border_color=BORDER
         ).pack(side="left", padx=(20, 0))
         self.seed_var.trace("w", lambda *a: self._toggle_seed())
 
         self.seed_entry = ctk.CTkEntry(
             row, width=90, placeholder_text="42",
-            fg_color=BG_GLASS_HOVER, border_color=BORDER, border_width=1,
+            fg_color=BG_CARD_HOVER, border_color=BORDER, border_width=1,
             corner_radius=10, state="disabled"
         )
         self.seed_entry.pack(side="left", padx=10)
@@ -474,13 +665,14 @@ class App(ctk.CTk):
             height=58, corner_radius=18,
             font=("Segoe UI Variable Display", 17, "bold"),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
-            text_color=TEXT_ON_ACCENT,
+            text_color="#FFFFFF",
             command=self._on_generate
         )
         self.generate_btn.pack(fill="x", pady=(0, 14))
 
         # ===== ВОЛНА =====
-        self.wave_card = GlassCard(left, height=130)
+        self.wave_card = ctk.CTkFrame(left, fg_color=BG_CARD, corner_radius=22,
+                                      border_color=BORDER, border_width=1, height=130)
         self.wave_card.pack(fill="x", pady=(0, 14))
         self.wave_card.pack_propagate(False)
 
@@ -491,7 +683,8 @@ class App(ctk.CTk):
         self.wave_placeholder.pack(expand=True)
 
         # ===== РЕЗУЛЬТАТ =====
-        result_card = GlassCard(left)
+        result_card = ctk.CTkFrame(left, fg_color=BG_CARD, corner_radius=22,
+                                   border_color=BORDER, border_width=1)
         result_card.pack(fill="x")
 
         ctk.CTkLabel(
@@ -513,7 +706,7 @@ class App(ctk.CTk):
         self.play_btn = ctk.CTkButton(
             btn_row, text="Play", width=110, height=36,
             corner_radius=12,
-            fg_color=BG_GLASS_HOVER, hover_color=BG_GLASS_ACTIVE,
+            fg_color=BG_CARD_HOVER, hover_color=BORDER,
             text_color=ACCENT, font=("Segoe UI", 12),
             command=self._toggle_play, state="disabled"
         )
@@ -522,7 +715,7 @@ class App(ctk.CTk):
         self.open_btn = ctk.CTkButton(
             btn_row, text="Открыть папку", width=150, height=36,
             corner_radius=12,
-            fg_color=BG_GLASS_HOVER, hover_color=BG_GLASS_ACTIVE,
+            fg_color=BG_CARD_HOVER, hover_color=BORDER,
             text_color=ACCENT, font=("Segoe UI", 12),
             command=self._open_folder, state="disabled"
         )
@@ -538,7 +731,7 @@ class App(ctk.CTk):
         self.history_scroll = ctk.CTkScrollableFrame(
             right, fg_color="transparent",
             scrollbar_button_color=BORDER,
-            scrollbar_button_hover_color=BORDER_STRONG
+            scrollbar_button_hover_color=BG_CARD_HOVER
         )
         self.history_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 14))
 
@@ -549,6 +742,15 @@ class App(ctk.CTk):
             justify="center"
         )
         self.history_empty.pack(expand=True, pady=40)
+
+    def _toggle_fullscreen(self):
+        self.is_fullscreen = not self.is_fullscreen
+        if self.is_fullscreen:
+            self.attributes("-fullscreen", True)
+            self.fs_btn.configure(text="✕")
+        else:
+            self.attributes("-fullscreen", False)
+            self.fs_btn.configure(text="⛶")
 
     def _add_slider_row(self, parent, label, from_, to, default, update_fn):
         row = ctk.CTkFrame(parent, fg_color="transparent")
@@ -561,9 +763,9 @@ class App(ctk.CTk):
             row, from_=from_, to=to, width=280,
             command=update_fn,
             progress_color=ACCENT,
-            fg_color=SLIDER_TRACK,
-            button_color=SLIDER_BUTTON,
-            button_hover_color=SLIDER_BUTTON_HOVER,
+            fg_color=BORDER,
+            button_color=TEXT_PRIMARY,
+            button_hover_color=BG_CARD_HOVER,
             button_length=24,
         )
         slider.set(default)
@@ -598,7 +800,7 @@ class App(ctk.CTk):
             end = min((step + 1) * step_size, len(audio))
             data = audio[:end]
             self._wave_ax.clear()
-            self._wave_ax.set_facecolor(BG_GLASS)
+            self._wave_ax.set_facecolor(BG_CARD)
             self._wave_ax.plot(data, color=ACCENT, linewidth=0.8)
             self._wave_ax.set_xlim(0, len(audio))
             self._wave_ax.set_ylim(-1.1, 1.1)
@@ -753,7 +955,7 @@ class App(ctk.CTk):
 
         for entry in self.history:
             item = ctk.CTkFrame(
-                self.history_scroll, fg_color=BG_GLASS_HOVER,
+                self.history_scroll, fg_color=BG_CARD_HOVER,
                 corner_radius=14, border_color=BORDER, border_width=1
             )
             item.pack(fill="x", pady=(0, 8))
@@ -779,8 +981,8 @@ class App(ctk.CTk):
             w.destroy()
 
         fig, ax = plt.subplots(figsize=(6.4, 1.2), dpi=80)
-        fig.patch.set_facecolor(BG_GLASS)
-        ax.set_facecolor(BG_GLASS)
+        fig.patch.set_facecolor(BG_CARD)
+        ax.set_facecolor(BG_CARD)
 
         self._wave_fig = fig
         self._wave_ax = ax
