@@ -97,10 +97,6 @@ class MusicLicenseGenerator:
 
     def _generate_with_context(self, prompt, duration, audio_context=None,
                                seed=None, temperature=1.0, guidance_scale=3.0):
-        """
-        Универсальная генерация.
-        Если audio_context передан — модель ПРОДОЛЖАЕТ мелодию, а не начинает заново.
-        """
         if audio_context is not None:
             ctx = torch.from_numpy(audio_context).float().unsqueeze(0)
             inputs = self.processor(
@@ -149,12 +145,6 @@ class MusicLicenseGenerator:
 
     def generate(self, prompt, duration=10, seed=None,
                  temperature=1.0, guidance_scale=3.0):
-        """
-        ГЕНЕРИРУЕТ ЦЕЛЬНЫЙ ТРЕК.
-        Для duration > 30 сек — continuation: каждый новый кусок получает
-        последние 10 секунд предыдущего как аудио-контекст. Модель ПРОДОЛЖАЕТ
-        мелодию, а не начинает новую.
-        """
         self.status("Генерация аудио...")
 
         if duration <= NATIVE_CHUNK:
@@ -279,7 +269,6 @@ Issued by: Aegis Audio"""
 
 
 class GlassCard(ctk.CTkFrame):
-    """Карточка в стиле iOS Liquid Glass."""
     def __init__(self, master, **kwargs):
         kwargs.setdefault('fg_color', BG_GLASS)
         kwargs.setdefault('border_color', BORDER)
@@ -289,22 +278,10 @@ class GlassCard(ctk.CTkFrame):
 
 
 class iOSButton(ctk.CTkButton):
-    """Кнопка с hover-анимацией scale (имитация iOS press effect)."""
-    def __init__(self, master, base_height=44, **kwargs):
-        # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: не дублируем corner_radius
+    """Кнопка без анимации hover — просто стильная кнопка."""
+    def __init__(self, master, **kwargs):
         kwargs.setdefault('corner_radius', 14)
-        kwargs.setdefault('height', base_height)
         super().__init__(master, **kwargs)
-        self.base_height = base_height
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-
-    def _on_enter(self, event):
-        if str(self.cget("state")) == "normal":
-            self.configure(height=self.base_height + 2)
-
-    def _on_leave(self, event):
-        self.configure(height=self.base_height)
 
 
 class App(ctk.CTk):
@@ -340,7 +317,6 @@ class App(ctk.CTk):
 
         threading.Thread(target=self._load_model, daemon=True).start()
 
-    # ===== UI BUILD =====
     def _build_ui(self):
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=24, pady=24)
@@ -409,8 +385,9 @@ class App(ctk.CTk):
             font=("Segoe UI", 11, "bold"), text_color=TEXT_DIM
         ).pack(side="left")
 
-        iOSButton(
-            prompt_header, text="Случайный", width=110, base_height=28,
+        ctk.CTkButton(
+            prompt_header, text="Случайный", width=110, height=28,
+            corner_radius=14,
             font=("Segoe UI", 11),
             fg_color=ACCENT_LIGHT, hover_color=BG_GLASS_ACTIVE,
             text_color=ACCENT,
@@ -429,8 +406,8 @@ class App(ctk.CTk):
         chips_frame.pack(fill="x", padx=22, pady=(0, 18))
 
         for name, text in PRESETS.items():
-            iOSButton(
-                chips_frame, text=name, width=100, base_height=30,
+            ctk.CTkButton(
+                chips_frame, text=name, width=100, height=30,
                 corner_radius=15,
                 fg_color=BG_GLASS_HOVER, hover_color=BG_GLASS_ACTIVE,
                 text_color=TEXT_SECONDARY,
@@ -492,9 +469,9 @@ class App(ctk.CTk):
         self.seed_entry.pack(side="left", padx=10)
 
         # ===== КНОПКА GENERATE =====
-        self.generate_btn = iOSButton(
+        self.generate_btn = ctk.CTkButton(
             left, text="Сгенерировать трек",
-            base_height=58, corner_radius=18,
+            height=58, corner_radius=18,
             font=("Segoe UI Variable Display", 17, "bold"),
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
             text_color=TEXT_ON_ACCENT,
@@ -533,16 +510,18 @@ class App(ctk.CTk):
         btn_row = ctk.CTkFrame(result_card, fg_color="transparent")
         btn_row.pack(fill="x", padx=22, pady=(0, 18))
 
-        self.play_btn = iOSButton(
-            btn_row, text="Play", width=110, base_height=36,
+        self.play_btn = ctk.CTkButton(
+            btn_row, text="Play", width=110, height=36,
+            corner_radius=12,
             fg_color=BG_GLASS_HOVER, hover_color=BG_GLASS_ACTIVE,
             text_color=ACCENT, font=("Segoe UI", 12),
             command=self._toggle_play, state="disabled"
         )
         self.play_btn.pack(side="left", padx=(0, 8))
 
-        self.open_btn = iOSButton(
-            btn_row, text="Открыть папку", width=150, base_height=36,
+        self.open_btn = ctk.CTkButton(
+            btn_row, text="Открыть папку", width=150, height=36,
+            corner_radius=12,
             fg_color=BG_GLASS_HOVER, hover_color=BG_GLASS_ACTIVE,
             text_color=ACCENT, font=("Segoe UI", 12),
             command=self._open_folder, state="disabled"
@@ -597,7 +576,6 @@ class App(ctk.CTk):
         parent._last_slider = slider
         parent._last_value_label = value_label
 
-    # ===== АНИМАЦИИ =====
     def _pulse_status(self):
         if self.model_loaded:
             return
@@ -631,19 +609,6 @@ class App(ctk.CTk):
 
         draw_step(0)
 
-    def _fade_in_history_item(self, item_frame, opacity=0.0):
-        target = 1.0
-        new_opacity = min(target, opacity + 0.15)
-        for child in item_frame.winfo_children():
-            if isinstance(child, ctk.CTkLabel):
-                base_color = child.cget("text_color")
-                if base_color == TEXT_PRIMARY:
-                    interp = int(140 + (30 - 140) * new_opacity)
-                    child.configure(text_color=f"#{interp:02x}{interp:02x}{interp:02x}")
-        if new_opacity < target:
-            self.after(40, lambda: self._fade_in_history_item(item_frame, new_opacity))
-
-    # ===== ЛОГИКА =====
     def _random_prompt(self):
         self._set_prompt(random.choice(RANDOM_PROMPTS))
 
@@ -808,8 +773,6 @@ class App(ctk.CTk):
                 item, text=entry["duration"],
                 font=("Segoe UI", 10), text_color=TEXT_DIM
             ).pack(anchor="w", padx=12, pady=(0, 10))
-
-            self._fade_in_history_item(item)
 
     def _draw_waveform(self, audio):
         for w in self.wave_card.winfo_children():
