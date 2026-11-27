@@ -8,3 +8,7 @@ sounddevice
 pyinstaller
 scipy
 matplotlib
+pydub
+librosa
+pyperclip
+pretty_midi
