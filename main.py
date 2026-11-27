@@ -23,6 +23,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from pydub import AudioSegment
 import pyperclip
 import pretty_midi
+import librosa
 
 # ===== PATH =====
 if getattr(sys, 'frozen', False):
@@ -636,32 +637,18 @@ Issued by: Aegis Audio Pro (Free Tier)"""
         return zip_filename
 
 
-# ===== DYNAMIC ISLAND (FIXED - использует pack, не place) =====
+# ===== DYNAMIC ISLAND =====
 class DynamicIsland(ctk.CTkFrame):
     def __init__(self, master, app_instance):
         super().__init__(master, fg_color="transparent")
         self.app = app_instance
         self.is_expanded = False
         self.expanded_panel = None
-        
-        # Используем pack вместо place для правильного z-order
         self.pack(fill="x", pady=(10, 0))
-        
-        # Компактный островок
-        self.compact = ctk.CTkFrame(
-            self, fg_color="#000000", corner_radius=25,
-            width=220, height=44
-        )
+        self.compact = ctk.CTkFrame(self, fg_color="#000000", corner_radius=25, width=220, height=44)
         self.compact.pack(expand=True)
-        
-        self.indicator = ctk.CTkLabel(
-            self.compact, text="● AI Assistant",
-            font=("Segoe UI", 12, "bold"),
-            text_color="#FFFFFF"
-        )
+        self.indicator = ctk.CTkLabel(self.compact, text="● AI Assistant", font=("Segoe UI", 12, "bold"), text_color="#FFFFFF")
         self.indicator.pack(expand=True)
-        
-        # Привязываем клик
         self.compact.bind("<Button-1>", lambda e: self._toggle())
         self.indicator.bind("<Button-1>", lambda e: self._toggle())
 
@@ -676,63 +663,24 @@ class DynamicIsland(ctk.CTkFrame):
             return
         self.is_expanded = True
         self.compact.pack_forget()
-        
-        self.expanded_panel = ctk.CTkFrame(
-            self, fg_color="#FFFFFF", corner_radius=24
-        )
+        self.expanded_panel = ctk.CTkFrame(self, fg_color="#FFFFFF", corner_radius=24)
         self.expanded_panel.pack(fill="x", pady=(0, 10))
-        
-        # Заголовок
         header = ctk.CTkFrame(self.expanded_panel, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(16, 12))
-        ctk.CTkLabel(
-            header, text="AI Assistant",
-            font=("Segoe UI Variable Display", 22, "bold"),
-            text_color="#000000"
-        ).pack(side="left")
-        ctk.CTkButton(
-            header, text="✕", width=32, height=32,
-            corner_radius=16, fg_color="#E5E5EA", hover_color="#D1D1D6",
-            text_color="#1C1C1E", font=("Segoe UI", 14),
-            command=self._collapse
-        ).pack(side="right")
-        
-        # Чат
+        ctk.CTkLabel(header, text="AI Assistant", font=("Segoe UI Variable Display", 22, "bold"), text_color="#000000").pack(side="left")
+        ctk.CTkButton(header, text="✕", width=32, height=32, corner_radius=16, fg_color="#E5E5EA", hover_color="#D1D1D6", text_color="#1C1C1E", font=("Segoe UI", 14), command=self._collapse).pack(side="right")
         chat_frame = ctk.CTkFrame(self.expanded_panel, fg_color="#1A1A1A", corner_radius=14)
         chat_frame.pack(fill="both", expand=True, padx=20, pady=(0, 12))
-        self.chat_display = ctk.CTkTextbox(
-            chat_frame, corner_radius=14, height=200,
-            font=("Segoe UI", 12), wrap="word",
-            fg_color="#1A1A1A", text_color="#FFFFFF",
-            border_width=0
-        )
+        self.chat_display = ctk.CTkTextbox(chat_frame, corner_radius=14, height=200, font=("Segoe UI", 12), wrap="word", fg_color="#1A1A1A", text_color="#FFFFFF", border_width=0)
         self.chat_display.pack(fill="both", expand=True, padx=12, pady=12)
         self.chat_display.insert("1.0", "Hi! I'm your AI assistant.\n\nCommands:\n• 'trim to 20 seconds'\n• 'add fade in/out'\n• 'make louder 50%'\n• 'loop mode'\n• 'reverse'\n• 'reverb'\n• 'bass boost'\n• 'pitch +2'\n• 'master'\n• 'eq low +3'\n• 'stats'\n• 'chords'\n• 'stems'\n")
-        
-        # Ввод
         input_frame = ctk.CTkFrame(self.expanded_panel, fg_color="transparent")
         input_frame.pack(fill="x", padx=20, pady=(0, 16))
-        self.chat_input = ctk.CTkEntry(
-            input_frame, placeholder_text="Type command...",
-            fg_color="#1A1A1A", border_color="#333333", border_width=1,
-            corner_radius=12, text_color="#FFFFFF", height=40
-        )
+        self.chat_input = ctk.CTkEntry(input_frame, placeholder_text="Type command...", fg_color="#1A1A1A", border_color="#333333", border_width=1, corner_radius=12, text_color="#FFFFFF", height=40)
         self.chat_input.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.chat_input.bind("<Return>", lambda e: self._process_command())
-        ctk.CTkButton(
-            input_frame, text="Send", width=100, height=40,
-            corner_radius=12, fg_color="#007AFF", hover_color="#0066CC",
-            text_color="#FFFFFF", font=("Segoe UI", 13, "bold"),
-            command=self._process_command
-        ).pack(side="right")
-        
-        ctk.CTkButton(
-            self.expanded_panel, text="Collapse",
-            height=32, corner_radius=16,
-            fg_color="#E5E5EA", hover_color="#D1D1D6",
-            text_color="#1C1C1E", font=("Segoe UI", 12),
-            command=self._collapse
-        ).pack(pady=(0, 16))
+        ctk.CTkButton(input_frame, text="Send", width=100, height=40, corner_radius=12, fg_color="#007AFF", hover_color="#0066CC", text_color="#FFFFFF", font=("Segoe UI", 13, "bold"), command=self._process_command).pack(side="right")
+        ctk.CTkButton(self.expanded_panel, text="Collapse", height=32, corner_radius=16, fg_color="#E5E5EA", hover_color="#D1D1D6", text_color="#1C1C1E", font=("Segoe UI", 12), command=self._collapse).pack(pady=(0, 16))
 
     def _collapse(self):
         if not self.is_expanded:
@@ -872,65 +820,34 @@ class SettingsWindow(ctk.CTkToplevel):
         for w in self.winfo_children():
             w.destroy()
         ctk.CTkLabel(self, text="⚙️ Settings", font=("Segoe UI Variable Display", 24, "bold"), text_color=T["text_primary"]).pack(pady=(20, 20))
-        
-        # Язык
         lang_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         lang_frame.pack(fill="x", padx=20, pady=8)
         ctk.CTkLabel(lang_frame, text="🌐 Language", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
         lang_btns = ctk.CTkFrame(lang_frame, fg_color="transparent")
         lang_btns.pack(fill="x", padx=15, pady=(0, 12))
         for lang_code, lang_name, flag in [("ru", "Русский", "🇷🇺"), ("en", "English", "🇬🇧")]:
-            ctk.CTkButton(
-                lang_btns, text=f"{flag} {lang_name}", width=160, height=36,
-                corner_radius=8,
-                fg_color=T["accent"] if CURRENT_LANG == lang_code else T["card"],
-                hover_color=T["accent_hover"], text_color="#FFFFFF",
-                font=("Segoe UI", 12),
-                command=lambda l=lang_code: self._set_lang(l)
-            ).pack(side="left", padx=5, expand=True)
-        
-        # Тема
+            ctk.CTkButton(lang_btns, text=f"{flag} {lang_name}", width=160, height=36, corner_radius=8, fg_color=T["accent"] if CURRENT_LANG == lang_code else T["card"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 12), command=lambda l=lang_code: self._set_lang(l)).pack(side="left", padx=5, expand=True)
         theme_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         theme_frame.pack(fill="x", padx=20, pady=8)
         ctk.CTkLabel(theme_frame, text="🎨 Theme", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
         theme_btns = ctk.CTkFrame(theme_frame, fg_color="transparent")
         theme_btns.pack(fill="x", padx=15, pady=(0, 12))
         for theme_name in ["dark", "light", "midnight"]:
-            ctk.CTkButton(
-                theme_btns, text=theme_name.capitalize(), width=110, height=36,
-                corner_radius=8,
-                fg_color=T["accent"] if CURRENT_THEME == theme_name else T["card"],
-                hover_color=T["accent_hover"], text_color="#FFFFFF",
-                font=("Segoe UI", 12),
-                command=lambda t=theme_name: self._set_theme(t)
-            ).pack(side="left", padx=5, expand=True)
-        
-        # Лицензия
+            ctk.CTkButton(theme_btns, text=theme_name.capitalize(), width=110, height=36, corner_radius=8, fg_color=T["accent"] if CURRENT_THEME == theme_name else T["card"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 12), command=lambda t=theme_name: self._set_theme(t)).pack(side="left", padx=5, expand=True)
         lic_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         lic_frame.pack(fill="x", padx=20, pady=8)
         ctk.CTkLabel(lic_frame, text="🔐 License Mode", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
         ctk.CTkLabel(lic_frame, text=f"Current: {LICENSE_MODE}", font=("Segoe UI", 14, "bold"), text_color=T["accent"]).pack(anchor="w", padx=15, pady=(0, 12))
-        
-        # Статистика
         stats = self.app.db.get_stats()
         stats_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         stats_frame.pack(fill="x", padx=20, pady=8)
         ctk.CTkLabel(stats_frame, text="📊 Statistics", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
         ctk.CTkLabel(stats_frame, text=f"Total tracks: {stats['total']}\nFavorites: {stats['favorites']}", font=("Segoe UI", 12), text_color=T["text_secondary"]).pack(anchor="w", padx=15, pady=(0, 12))
-        
-        # О приложении
         about_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         about_frame.pack(fill="x", padx=20, pady=8)
         ctk.CTkLabel(about_frame, text="ℹ️ About", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
         ctk.CTkLabel(about_frame, text="Aegis Audio Pro v1.0\nRoyalty-free AI audio generator\nwith cryptographic licensing", font=("Segoe UI", 11), text_color=T["text_secondary"], justify="left").pack(anchor="w", padx=15, pady=(0, 12))
-        
-        # Закрыть
-        ctk.CTkButton(
-            self, text="Close", height=44, corner_radius=12,
-            fg_color=T["accent"], hover_color=T["accent_hover"],
-            text_color="#FFFFFF", font=("Segoe UI", 14, "bold"),
-            command=self.destroy
-        ).pack(pady=20)
+        ctk.CTkButton(self, text="Close", height=44, corner_radius=12, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 14, "bold"), command=self.destroy).pack(pady=20)
 
     def _set_lang(self, lang):
         global CURRENT_LANG
@@ -944,7 +861,6 @@ class SettingsWindow(ctk.CTkToplevel):
         CURRENT_THEME = theme
         T = THEMES[theme]
         ctk.set_appearance_mode(theme)
-        # Не пересоздаём окно - только обновляем цвета
         self.app._apply_theme()
         self.configure(fg_color=T["card"])
         self._build()
@@ -1000,48 +916,25 @@ class App(ctk.CTk):
         self.bind("<F11>", lambda e: self._toggle_fullscreen())
 
     def _build_ui(self):
-        # Dynamic Island сверху (использует pack, не place)
         self.island = DynamicIsland(self, self)
-        
-        # Главный контейнер
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=24, pady=(10, 24))
-        
-        # Canvas для скроллинга
         canvas = ctk.CTkCanvas(main, bg=T["app"], highlightthickness=0)
         scrollbar = ctk.CTkScrollbar(main, orientation="vertical", command=canvas.yview)
         scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        
-        # Привязываем скролл колёсиком
         canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-        
         left = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         left.pack(side="left", fill="both", expand=True)
-        
         right = ctk.CTkFrame(scrollable_frame, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, width=340)
         right.pack(side="right", fill="y", padx=(16, 0))
         right.pack_propagate(False)
-        
-        # Сохраняем ссылки для обновления темы
-        self._main_container = main
         self._canvas = canvas
-        self._scrollbar = scrollbar
         self._scrollable_frame = scrollable_frame
-        self._left_panel = left
-        self._right_panel = right
-        
-        # HEADER
         header = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         header.pack(fill="x", pady=(0, 14))
         title_row = ctk.CTkFrame(header, fg_color="transparent")
@@ -1049,25 +942,11 @@ class App(ctk.CTk):
         ctk.CTkLabel(title_row, text="Aegis Audio Pro", font=("Segoe UI Variable Display", 30, "bold"), text_color=T["text_primary"]).pack(side="left")
         self.license_label = ctk.CTkLabel(title_row, text=f"[{LICENSE_MODE}]", font=("Segoe UI", 12, "bold"), text_color=T["success"] if LICENSE_MODE == "PRO" else T["warning"])
         self.license_label.pack(side="right", padx=(0, 10))
-        # Кнопка настроек
-        ctk.CTkButton(
-            title_row, text="⚙️", width=40, height=30,
-            corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"],
-            text_color=T["text_primary"], font=("Segoe UI", 14),
-            command=self._open_settings
-        ).pack(side="right", padx=(0, 10))
-        # Fullscreen
-        self.fs_btn = ctk.CTkButton(
-            title_row, text="⛶", width=40, height=30,
-            corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"],
-            text_color=T["text_primary"], font=("Segoe UI", 14),
-            command=self._toggle_fullscreen
-        ).pack(side="right", padx=(0, 10))
+        ctk.CTkButton(title_row, text="⚙️", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._open_settings).pack(side="right", padx=(0, 10))
+        self.fs_btn = ctk.CTkButton(title_row, text="⛶", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._toggle_fullscreen).pack(side="right", padx=(0, 10))
         self.counter_label = ctk.CTkLabel(title_row, text=f"0 {tr('tracks')}", font=("Segoe UI", 12), text_color=T["text_dim"])
         self.counter_label.pack(side="right", pady=6)
         ctk.CTkLabel(header, text="Royalty-free AI audio with cryptographic licensing", font=("Segoe UI", 13), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(0, 18))
-        
-        # STATUS + PROGRESS
         status_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         status_card.pack(fill="x", pady=(0, 14))
         self.status_label = ctk.CTkLabel(status_card, text="Initializing...", font=("Consolas", 12), text_color=T["warning"], anchor="w")
@@ -1075,8 +954,6 @@ class App(ctk.CTk):
         self.progress_bar = ctk.CTkProgressBar(status_card, height=6, corner_radius=3, progress_color=T["accent"], fg_color=T["border"])
         self.progress_bar.pack(fill="x", padx=22, pady=(0, 14))
         self.progress_bar.set(0)
-        
-        # PROMPT
         prompt_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         prompt_card.pack(fill="x", pady=(0, 14))
         prompt_header = ctk.CTkFrame(prompt_card, fg_color="transparent")
@@ -1090,8 +967,6 @@ class App(ctk.CTk):
         chips_frame.pack(fill="x", padx=22, pady=(0, 18))
         for name, data in PRESETS.items():
             ctk.CTkButton(chips_frame, text=name, width=100, height=30, corner_radius=15, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_secondary"], font=("Segoe UI", 11), command=lambda t=data["prompt"]: self._set_prompt(t)).pack(side="left", padx=(0, 6))
-        
-        # SETTINGS
         settings_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         settings_card.pack(fill="x", pady=(0, 14))
         self._add_slider_row(settings_card, tr("duration"), 5, 120, 10, self._update_duration_label)
@@ -1120,16 +995,12 @@ class App(ctk.CTk):
         self.seed_var.trace("w", lambda *a: self._toggle_seed())
         self.seed_entry = ctk.CTkEntry(row, width=90, placeholder_text="42", fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=10, state="disabled")
         self.seed_entry.pack(side="left", padx=10)
-        
-        # ACTION BUTTONS
         btn_frame = ctk.CTkFrame(left, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(0, 14))
         self.generate_btn = ctk.CTkButton(btn_frame, text=tr("generate"), height=58, corner_radius=18, font=("Segoe UI Variable Display", 17, "bold"), fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", command=self._on_generate)
         self.generate_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self.export_btn = ctk.CTkButton(btn_frame, text=tr("export"), height=58, corner_radius=18, font=("Segoe UI", 14, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=self._export_audio, state="disabled")
         self.export_btn.pack(side="left", fill="x", expand=True)
-        
-        # WAVEFORM / SPECTRUM
         self.wave_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, height=150)
         self.wave_card.pack(fill="x", pady=(0, 14))
         self.wave_card.pack_propagate(False)
@@ -1140,8 +1011,6 @@ class App(ctk.CTk):
         self.view_btn.pack(side="right")
         self.wave_placeholder = ctk.CTkLabel(self.wave_card, text="Visualization will appear after generation", font=("Segoe UI", 12), text_color=T["text_dim"])
         self.wave_placeholder.pack(expand=True)
-        
-        # EFFECTS
         effects_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         effects_card.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(effects_card, text=tr("effects"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
@@ -1162,15 +1031,11 @@ class App(ctk.CTk):
             btn.grid(row=row_idx, column=col_idx, padx=4, pady=4, sticky="ew")
         for c in range(6):
             effects_grid.grid_columnconfigure(c, weight=1)
-        
-        # METADATA
         meta_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         meta_card.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(meta_card, text=tr("metadata"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
         self.meta_text = ctk.CTkLabel(meta_card, text="BPM: -- | Key: -- | Duration: -- | RMS: --", font=("Consolas", 11), text_color=T["text_dim"], wraplength=700, justify="left")
         self.meta_text.pack(anchor="w", padx=22, pady=(0, 16))
-        
-        # RESULT
         result_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         result_card.pack(fill="x")
         ctk.CTkLabel(result_card, text=tr("result"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
@@ -1184,8 +1049,6 @@ class App(ctk.CTk):
         self.save_btn.pack(side="left", padx=(0, 8))
         self.open_btn = ctk.CTkButton(btn_row, text=tr("folder"), width=100, height=36, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 12), command=self._open_folder, state="disabled")
         self.open_btn.pack(side="left")
-        
-        # RIGHT PANEL
         ctk.CTkLabel(right, text=tr("history"), font=("Segoe UI Variable Display", 18, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=20, pady=(20, 14))
         self.search_entry = ctk.CTkEntry(right, placeholder_text=tr("search"), fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=10, textvariable=self.search_var)
         self.search_entry.pack(fill="x", padx=12, pady=(0, 10))
@@ -1200,13 +1063,10 @@ class App(ctk.CTk):
         self.history_empty.pack(expand=True, pady=40)
 
     def _apply_theme(self):
-        """Применяет тему без пересоздания UI"""
         self.configure(fg_color=T["app"])
         self._canvas.configure(bg=T["app"])
-        # Остальные цвета обновятся при следующем взаимодействии
 
     def _refresh_ui_texts(self):
-        """Перерисовывает тексты при смене языка"""
         try:
             self.generate_btn.configure(text=tr("generate"))
             self.export_btn.configure(text=tr("export"))
@@ -1347,8 +1207,11 @@ class App(ctk.CTk):
             self.after(0, lambda: self.set_progress(100))
             self.after(0, lambda: self.status_label.configure(text_color=T["success"]))
         except Exception as e:
-            self.after(0, lambda: self.set_status(f"Error: {e}"))
-            self.after(0, lambda: self.status_label.configure(text_color=T["danger"]))
+            err_msg = str(e)
+            def err():
+                self.set_status(f"Error: {err_msg}")
+                self.status_label.configure(text_color=T["danger"])
+            self.after(0, err)
 
     def _save_undo_state(self):
         if self.current_audio is not None:
@@ -1402,7 +1265,8 @@ class App(ctk.CTk):
             self._draw_waveform(self.current_audio)
             self.set_status(f"{tr('applied')}: {effect}")
         except Exception as e:
-            self.set_status(f"{tr('effect_error')}: {e}")
+            err_msg = str(e)
+            self.set_status(f"{tr('effect_error')}: {err_msg}")
 
     def _separate_stems(self):
         if not self.current_audio:
@@ -1532,11 +1396,14 @@ class App(ctk.CTk):
                 self._draw_waveform(best_audio)
             self.after(0, done)
         except Exception as e:
+            # ВАЖНО: сохраняем ошибку ДО вложенной функции (Python 3.12 fix)
+            error_msg = str(e)
+            error_trace = traceback.format_exc()
             def err():
                 self.generate_btn.configure(state="normal", text=tr("generate"))
-                self.set_status(f"Error: {e}")
+                self.set_status(f"Error: {error_msg}")
                 self.status_label.configure(text_color=T["danger"])
-                print(traceback.format_exc())
+                print(error_trace)
             self.after(0, err)
 
     def _save_project(self):
@@ -1589,7 +1456,8 @@ class App(ctk.CTk):
                     self.generator.save_wav(self.current_audio)
                 self.set_status(f"{tr('exported')}: {export_path}")
             except Exception as e:
-                self.set_status(f"{tr('export_error')}: {e}")
+                err_msg = str(e)
+                self.set_status(f"{tr('export_error')}: {err_msg}")
 
     def _update_history(self):
         for w in self.history_scroll.winfo_children():
