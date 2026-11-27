@@ -636,22 +636,23 @@ Issued by: Aegis Audio Pro (Free Tier)"""
         return zip_filename
 
 
-# ===== DYNAMIC ISLAND (FIXED) =====
+# ===== DYNAMIC ISLAND (FIXED - использует pack, не place) =====
 class DynamicIsland(ctk.CTkFrame):
     def __init__(self, master, app_instance):
         super().__init__(master, fg_color="transparent")
         self.app = app_instance
         self.is_expanded = False
         self.expanded_panel = None
-        # Позиционируем по центру сверху через place (не pack!)
-        self.place(relx=0.5, rely=0, anchor="n", x=0, y=10)
+        
+        # Используем pack вместо place для правильного z-order
+        self.pack(fill="x", pady=(10, 0))
         
         # Компактный островок
         self.compact = ctk.CTkFrame(
             self, fg_color="#000000", corner_radius=25,
             width=220, height=44
         )
-        self.compact.pack()
+        self.compact.pack(expand=True)
         
         self.indicator = ctk.CTkLabel(
             self.compact, text="● AI Assistant",
@@ -660,7 +661,7 @@ class DynamicIsland(ctk.CTkFrame):
         )
         self.indicator.pack(expand=True)
         
-        # Привязываем клик только к компакту
+        # Привязываем клик
         self.compact.bind("<Button-1>", lambda e: self._toggle())
         self.indicator.bind("<Button-1>", lambda e: self._toggle())
 
@@ -677,10 +678,9 @@ class DynamicIsland(ctk.CTkFrame):
         self.compact.pack_forget()
         
         self.expanded_panel = ctk.CTkFrame(
-            self, fg_color="#FFFFFF", corner_radius=24,
-            width=700, height=520
+            self, fg_color="#FFFFFF", corner_radius=24
         )
-        self.expanded_panel.pack()
+        self.expanded_panel.pack(fill="x", pady=(0, 10))
         
         # Заголовок
         header = ctk.CTkFrame(self.expanded_panel, fg_color="transparent")
@@ -701,7 +701,7 @@ class DynamicIsland(ctk.CTkFrame):
         chat_frame = ctk.CTkFrame(self.expanded_panel, fg_color="#1A1A1A", corner_radius=14)
         chat_frame.pack(fill="both", expand=True, padx=20, pady=(0, 12))
         self.chat_display = ctk.CTkTextbox(
-            chat_frame, corner_radius=14,
+            chat_frame, corner_radius=14, height=200,
             font=("Segoe UI", 12), wrap="word",
             fg_color="#1A1A1A", text_color="#FFFFFF",
             border_width=0
@@ -741,7 +741,7 @@ class DynamicIsland(ctk.CTkFrame):
         if self.expanded_panel:
             self.expanded_panel.destroy()
             self.expanded_panel = None
-        self.compact.pack()
+        self.compact.pack(expand=True)
 
     def _process_command(self):
         command = self.chat_input.get().strip().lower()
@@ -944,8 +944,9 @@ class SettingsWindow(ctk.CTkToplevel):
         CURRENT_THEME = theme
         T = THEMES[theme]
         ctk.set_appearance_mode(theme)
-        self.app.configure(fg_color=T["app"])
-        self.app.set_status(f"Theme: {theme}")
+        # Не пересоздаём окно - только обновляем цвета
+        self.app._apply_theme()
+        self.configure(fg_color=T["card"])
         self._build()
 
 
@@ -999,19 +1000,46 @@ class App(ctk.CTk):
         self.bind("<F11>", lambda e: self._toggle_fullscreen())
 
     def _build_ui(self):
-        # Dynamic Island (поверх всего через place)
+        # Dynamic Island сверху (использует pack, не place)
         self.island = DynamicIsland(self, self)
         
-        # Главный контейнер с отступом сверху для островка
+        # Главный контейнер
         main = ctk.CTkFrame(self, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=24, pady=(60, 24))
+        main.pack(fill="both", expand=True, padx=24, pady=(10, 24))
         
-        left = ctk.CTkFrame(main, fg_color="transparent")
+        # Canvas для скроллинга
+        canvas = ctk.CTkCanvas(main, bg=T["app"], highlightthickness=0)
+        scrollbar = ctk.CTkScrollbar(main, orientation="vertical", command=canvas.yview)
+        scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Привязываем скролл колёсиком
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        
+        left = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         left.pack(side="left", fill="both", expand=True)
         
-        right = ctk.CTkFrame(main, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, width=340)
+        right = ctk.CTkFrame(scrollable_frame, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, width=340)
         right.pack(side="right", fill="y", padx=(16, 0))
         right.pack_propagate(False)
+        
+        # Сохраняем ссылки для обновления темы
+        self._main_container = main
+        self._canvas = canvas
+        self._scrollbar = scrollbar
+        self._scrollable_frame = scrollable_frame
+        self._left_panel = left
+        self._right_panel = right
         
         # HEADER
         header = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
@@ -1021,7 +1049,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(title_row, text="Aegis Audio Pro", font=("Segoe UI Variable Display", 30, "bold"), text_color=T["text_primary"]).pack(side="left")
         self.license_label = ctk.CTkLabel(title_row, text=f"[{LICENSE_MODE}]", font=("Segoe UI", 12, "bold"), text_color=T["success"] if LICENSE_MODE == "PRO" else T["warning"])
         self.license_label.pack(side="right", padx=(0, 10))
-        # Кнопка настроек (шестерёнка)
+        # Кнопка настроек
         ctk.CTkButton(
             title_row, text="⚙️", width=40, height=30,
             corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"],
@@ -1170,6 +1198,12 @@ class App(ctk.CTk):
         self.history_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 14))
         self.history_empty = ctk.CTkLabel(self.history_scroll, text=tr("empty_history"), font=("Segoe UI", 12), text_color=T["text_dim"], justify="center")
         self.history_empty.pack(expand=True, pady=40)
+
+    def _apply_theme(self):
+        """Применяет тему без пересоздания UI"""
+        self.configure(fg_color=T["app"])
+        self._canvas.configure(bg=T["app"])
+        # Остальные цвета обновятся при следующем взаимодействии
 
     def _refresh_ui_texts(self):
         """Перерисовывает тексты при смене языка"""
