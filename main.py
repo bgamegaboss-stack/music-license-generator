@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 import shutil
+import time
 from datetime import datetime
 from fpdf import FPDF
 import zipfile
@@ -32,12 +33,6 @@ try:
 except ImportError:
     HAS_QRCODE = False
 
-try:
-    from PIL import Image
-    HAS_PIL = True
-except ImportError:
-    HAS_PIL = False
-
 if getattr(sys, 'frozen', False):
     script_dir = os.path.dirname(sys.executable)
 else:
@@ -50,24 +45,21 @@ THEMES = {
         "border": "#333333", "text_primary": "#FFFFFF", "text_secondary": "#A0A0A0",
         "text_dim": "#666666", "accent": "#007AFF", "accent_hover": "#0066CC",
         "accent_light": "#E5F1FF", "success": "#34C759", "warning": "#FF9500",
-        "danger": "#FF3B30", "island": "#000000", "island_text": "#FFFFFF",
-        "waveform": "#00E5FF", "spectrum": "#FF6B35"
+        "danger": "#FF3B30", "waveform": "#00E5FF", "spectrum": "#FF6B35"
     },
     "light": {
         "app": "#F2F2F7", "card": "#FFFFFF", "card_hover": "#F9F9FB",
         "border": "#E5E5EA", "text_primary": "#1C1C1E", "text_secondary": "#3A3A3C",
         "text_dim": "#8E8E93", "accent": "#007AFF", "accent_hover": "#0066CC",
         "accent_light": "#E5F1FF", "success": "#34C759", "warning": "#FF9500",
-        "danger": "#FF3B30", "island": "#1C1C1E", "island_text": "#FFFFFF",
-        "waveform": "#007AFF", "spectrum": "#FF3B30"
+        "danger": "#FF3B30", "waveform": "#007AFF", "spectrum": "#FF3B30"
     },
     "midnight": {
         "app": "#0A0A1F", "card": "#151530", "card_hover": "#1F1F45",
         "border": "#2A2A55", "text_primary": "#E0E0FF", "text_secondary": "#A0A0C0",
         "text_dim": "#606080", "accent": "#7C4DFF", "accent_hover": "#651FFF",
         "accent_light": "#EDE7F6", "success": "#00E676", "warning": "#FFAB40",
-        "danger": "#FF5252", "island": "#0A0A1F", "island_text": "#E0E0FF",
-        "waveform": "#7C4DFF", "spectrum": "#FF4081"
+        "danger": "#FF5252", "waveform": "#7C4DFF", "spectrum": "#FF4081"
     }
 }
 
@@ -160,6 +152,9 @@ RU_COMMANDS = {
     "сайдчейн": "sidechain", "sidechain": "sidechain",
     "винил": "vinyl", "vinyl": "vinyl",
     "гейм": "game_export", "game_export": "game_export", "godot": "game_export", "unity": "game_export",
+    "теги": "tags", "tags": "tags",
+    "фингерпринт": "fingerprint", "fingerprint": "fingerprint",
+    "темпотап": "tempo_tap", "tempo_tap": "tempo_tap",
 }
 
 CHORD_PROGRESSIONS = [
@@ -206,8 +201,16 @@ LANG_UI = {
         "code_active": "✅ PRO активен", "code_inactive": "⚠️ FREE режим",
         "code_success": "Промокод принят — PRO активирован!",
         "code_fail": "Неверный промокод",
-        "license_lang": "Язык лицензии",
-        "license_all": "Все 4 языка",
+        "ai_assistant": "🤖 AI Assistant",
+        "shortcuts": "⌨️ Горячие клавиши (F1)",
+        "tempo_tap": "🎯 Tempo Tap",
+        "auto_tags": "🏷️ Auto Tags",
+        "fingerprint": "🔐 Fingerprint",
+        "volume_meter": "📊 Volume",
+        "tap_bpm": "Тапай в ритм!",
+        "bpm_detected": "BPM определён",
+        "tags_generated": "Теги сгенерированы",
+        "fingerprint_copied": "Fingerprint скопирован",
     },
     "en": {
         "generate": "⚡ Generate (Ctrl+G)", "export": "📤 Export (Ctrl+E)",
@@ -236,8 +239,16 @@ LANG_UI = {
         "code_active": "✅ PRO active", "code_inactive": "⚠️ FREE mode",
         "code_success": "Promo code accepted — PRO activated!",
         "code_fail": "Invalid promo code",
-        "license_lang": "License language",
-        "license_all": "All 4 languages",
+        "ai_assistant": "🤖 AI Assistant",
+        "shortcuts": "⌨️ Shortcuts (F1)",
+        "tempo_tap": "🎯 Tempo Tap",
+        "auto_tags": "🏷️ Auto Tags",
+        "fingerprint": "🔐 Fingerprint",
+        "volume_meter": "📊 Volume",
+        "tap_bpm": "Tap in rhythm!",
+        "bpm_detected": "BPM detected",
+        "tags_generated": "Tags generated",
+        "fingerprint_copied": "Fingerprint copied",
     }
 }
 
@@ -245,6 +256,7 @@ def tr(key):
     return LANG_UI[CURRENT_LANG].get(key, key)
 
 
+# ===== DATABASE =====
 class Database:
     def __init__(self, db_path="aegis_audio.db"):
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -258,20 +270,21 @@ class Database:
             dynamic_range REAL, license_type TEXT, licensee TEXT, file_hash TEXT,
             file_path TEXT, favorite INTEGER DEFAULT 0, seed INTEGER,
             temperature REAL, guidance_scale REAL, loop_mode INTEGER DEFAULT 0,
-            audio_preview TEXT)''')
+            audio_preview TEXT, tags TEXT, fingerprint TEXT)''')
         self.conn.commit()
 
     def add_track(self, **kw):
         self.cursor.execute('''INSERT INTO tracks (timestamp, prompt, duration, bpm, key, rms, peak,
             dynamic_range, license_type, licensee, file_hash, file_path, favorite,
-            seed, temperature, guidance_scale, loop_mode, audio_preview)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
+            seed, temperature, guidance_scale, loop_mode, audio_preview, tags, fingerprint)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
             kw.get('timestamp', datetime.now().isoformat()), kw.get('prompt', ''),
             kw.get('duration', 0), kw.get('bpm'), kw.get('key'), kw.get('rms'),
             kw.get('peak'), kw.get('dynamic_range'), kw.get('license_type', 'Personal'),
             kw.get('licensee', 'User'), kw.get('file_hash', ''), kw.get('file_path', ''),
             kw.get('favorite', 0), kw.get('seed'), kw.get('temperature', 1.0),
-            kw.get('guidance_scale', 3.0), kw.get('loop_mode', 0), kw.get('audio_preview', '')))
+            kw.get('guidance_scale', 3.0), kw.get('loop_mode', 0), kw.get('audio_preview', ''),
+            kw.get('tags', ''), kw.get('fingerprint', '')))
         self.conn.commit()
         return self.cursor.lastrowid
 
@@ -287,6 +300,7 @@ class Database:
         return {"total": total, "favorites": favs}
 
 
+# ===== MUSIC GENERATOR =====
 class MusicLicenseGenerator:
     def __init__(self, status_callback=None, progress_callback=None):
         self.status = status_callback or (lambda x: None)
@@ -476,6 +490,80 @@ class MusicLicenseGenerator:
         dynamic_range = 20 * np.log10(peak / max(rms, 1e-10))
         return {"rms": round(rms, 4), "peak": round(peak, 4), "duration": round(duration, 2),
                 "dynamic_range_db": round(dynamic_range, 2), "samples": len(audio), "sample_rate": sr}
+
+    @staticmethod
+    def detect_energy(audio):
+        """Определяет энергию трека (0-100)"""
+        rms = np.sqrt(np.mean(audio ** 2))
+        energy = min(100, int(rms * 200))
+        return energy
+
+    @staticmethod
+    def detect_mood(audio):
+        """Определяет настроение на основе спектра"""
+        spectrum = np.abs(np.fft.rfft(audio))
+        freqs = np.fft.rfftfreq(len(audio), 1.0 / SAMPLE_RATE)
+        
+        low_energy = np.mean(spectrum[(freqs >= 20) & (freqs < 250)]) if np.any((freqs >= 20) & (freqs < 250)) else 0
+        mid_energy = np.mean(spectrum[(freqs >= 250) & (freqs < 2000)]) if np.any((freqs >= 250) & (freqs < 2000)) else 0
+        high_energy = np.mean(spectrum[(freqs >= 2000) & (freqs < 8000)]) if np.any((freqs >= 2000) & (freqs < 8000)) else 0
+        
+        total = low_energy + mid_energy + high_energy
+        if total == 0:
+            return "neutral"
+        
+        low_ratio = low_energy / total
+        high_ratio = high_energy / total
+        
+        if low_ratio > 0.5:
+            return "dark"
+        elif high_ratio > 0.4:
+            return "bright"
+        else:
+            return "balanced"
+
+    @staticmethod
+    def detect_genre(audio, bpm):
+        """Определяет жанр на основе BPM и спектра"""
+        if bpm is None:
+            return "unknown"
+        
+        if bpm < 70:
+            return "ambient"
+        elif bpm < 90:
+            return "lo-fi"
+        elif bpm < 110:
+            return "hip-hop"
+        elif bpm < 130:
+            return "electronic"
+        elif bpm < 150:
+            return "trap"
+        else:
+            return "drum-and-bass"
+
+    @staticmethod
+    def generate_tags(audio, bpm):
+        """Генерирует теги для трека"""
+        energy = MusicLicenseGenerator.detect_energy(audio)
+        mood = MusicLicenseGenerator.detect_mood(audio)
+        genre = MusicLicenseGenerator.detect_genre(audio, bpm)
+        
+        tags = {
+            "genre": genre,
+            "mood": mood,
+            "energy": energy,
+            "bpm": bpm or "unknown"
+        }
+        return tags
+
+    @staticmethod
+    def generate_fingerprint(audio):
+        """Генерирует уникальный отпечаток трека"""
+        # Берём первые 10 секунд
+        sample = audio[:SAMPLE_RATE * 10]
+        # Вычисляем хеш
+        hash_obj = hashlib.sha256(sample.tobytes())
+        return hash_obj.hexdigest()[:16]
 
     @staticmethod
     def apply_reverb(audio, decay=0.5, mix=0.3):
@@ -917,14 +1005,12 @@ class MusicLicenseGenerator:
 
     @staticmethod
     def create_game_ready_package(audio_filename, zip_filename, prompt, bpm, key):
-        """Создаёт папку для Godot/Unity с .meta файлами"""
         game_dir = f"GameReady_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         os.makedirs(game_dir, exist_ok=True)
 
         shutil.copy(audio_filename, os.path.join(game_dir, os.path.basename(audio_filename)))
 
         guid = hashlib.md5(audio_filename.encode()).hexdigest()[:32]
-        # Unity .meta — {} экранированы как {{}}
         meta_content = (
             "fileFormatVersion: 2\n"
             f"guid: {guid}\n"
@@ -952,7 +1038,6 @@ class MusicLicenseGenerator:
         with open(os.path.join(game_dir, os.path.basename(audio_filename) + ".meta"), 'w') as f:
             f.write(meta_content)
 
-        # Godot .import
         godot_import = (
             "[remap]\n\n"
             'importer="wav"\n'
@@ -965,7 +1050,6 @@ class MusicLicenseGenerator:
         with open(os.path.join(game_dir, os.path.basename(audio_filename) + ".import"), 'w') as f:
             f.write(godot_import)
 
-        # README
         readme = (
             "# Game Ready Audio Package\n\n"
             "Generated by Aegis Audio Pro\n"
@@ -994,41 +1078,43 @@ class MusicLicenseGenerator:
         return game_dir
 
 
-class AIAssistantPanel(ctk.CTkFrame):
-    def __init__(self, master, app_instance):
-        super().__init__(master, fg_color=T["card"], corner_radius=0, border_color=T["border"], border_width=1)
-        self.app = app_instance
-        self.is_expanded = False
-        self.pack_forget()
+# ===== AI ASSISTANT (Toplevel окно) =====
+class AIAssistantWindow(ctk.CTkToplevel):
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("AI Assistant")
+        self.geometry("380x500+850+450")
+        self.configure(fg_color=T["card"])
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.transient(app)
+        self._build()
 
+    def _build(self):
+        for w in self.winfo_children():
+            w.destroy()
+        
+        # Заголовок
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(16, 12))
         ctk.CTkLabel(header, text="🤖 AI Assistant", font=("Segoe UI Variable Display", 18, "bold"), text_color=T["text_primary"]).pack(side="left")
-        ctk.CTkButton(header, text="✕", width=32, height=32, corner_radius=16, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._collapse).pack(side="right")
+        ctk.CTkButton(header, text="✕", width=32, height=32, corner_radius=16, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self.destroy).pack(side="right")
 
+        # Чат
         chat_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         chat_frame.pack(fill="both", expand=True, padx=20, pady=(0, 12))
         self.chat_display = ctk.CTkTextbox(chat_frame, corner_radius=12, font=("Segoe UI", 12), wrap="word", fg_color=T["card_hover"], text_color=T["text_primary"], border_width=0)
         self.chat_display.pack(fill="both", expand=True, padx=12, pady=12)
-        self.chat_display.insert("1.0", "Привет! Я AI-ассистент Aegis Audio.\n\nКоманды (рус/eng):\n• 'обрежь до 20 секунд'\n• 'добавь фейд ин'\n• 'сделай громче на 50%'\n• 'луп' / 'loop'\n• 'реверс' / 'reverse'\n• 'реверб' / 'reverb'\n• 'бас' / 'bass boost'\n• 'питч +2' / 'pitch +2'\n• 'мастер' / 'master'\n• 'сайдчейн' / 'sidechain'\n• 'винил' / 'vinyl'\n• 'экв низ +3' / 'eq low +3'\n• 'стата' / 'stats'\n• 'аккорды' / 'chords'\n• 'стемы' / 'stems'\n• 'гейм' / 'game export'\n")
+        self.chat_display.insert("1.0", "Привет! Я AI-ассистент Aegis Audio.\n\nКоманды (рус/eng):\n• 'обрежь до 20 секунд'\n• 'добавь фейд ин'\n• 'сделай громче на 50%'\n• 'луп' / 'loop'\n• 'реверс' / 'reverse'\n• 'реверб' / 'reverb'\n• 'бас' / 'bass boost'\n• 'питч +2' / 'pitch +2'\n• 'мастер' / 'master'\n• 'сайдчейн' / 'sidechain'\n• 'винил' / 'vinyl'\n• 'экв низ +3' / 'eq low +3'\n• 'стата' / 'stats'\n• 'аккорды' / 'chords'\n• 'стемы' / 'stems'\n• 'теги' / 'tags'\n• 'фингерпринт' / 'fingerprint'\n")
 
+        # Ввод
         input_frame = ctk.CTkFrame(self, fg_color="transparent")
         input_frame.pack(fill="x", padx=20, pady=(0, 16))
         self.chat_input = ctk.CTkEntry(input_frame, placeholder_text="Введи команду...", fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=12, text_color=T["text_primary"], height=40)
         self.chat_input.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.chat_input.bind("<Return>", lambda e: self._process_command())
         ctk.CTkButton(input_frame, text="Send", width=100, height=40, corner_radius=12, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 13, "bold"), command=self._process_command).pack(side="right")
-
-    def _expand(self):
-        if not self.is_expanded:
-            self.is_expanded = True
-            self.pack(side="right", fill="y", padx=(16, 0), pady=(0, 24))
-            self.configure(width=380)
-
-    def _collapse(self):
-        if self.is_expanded:
-            self.is_expanded = False
-            self.pack_forget()
 
     def _process_command(self):
         command = self.chat_input.get().strip().lower()
@@ -1109,10 +1195,10 @@ class AIAssistantPanel(ctk.CTkFrame):
                 return "✅ Авто-мастеринг"
             elif "sidechain" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_sidechain_ducking(self.app.current_audio)
-                return "✅ Сайдчейн — эффект 'дыхания'"
+                return "✅ Сайдчейн"
             elif "vinyl" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_vinyl_effect(self.app.current_audio)
-                return "✅ Винил — тёплый lo-fi звук"
+                return "✅ Винил"
             elif "eq" in command:
                 match = re.search(r'(low|mid|high|низ|сер|выс)\s*([+-]?\d+)', command)
                 if match:
@@ -1135,7 +1221,13 @@ class AIAssistantPanel(ctk.CTkFrame):
                 return "🎵 Кнопка 'Stems' в панели эффектов"
             elif "game_export" in command:
                 self.app._export_game_ready()
-                return "✅ Game Ready пакет создан (Godot + Unity)"
+                return "✅ Game Ready пакет создан"
+            elif "tags" in command:
+                self.app._generate_auto_tags()
+                return "✅ Теги сгенерированы"
+            elif "fingerprint" in command:
+                self.app._copy_fingerprint()
+                return "✅ Fingerprint скопирован"
             elif "stats" in command:
                 analytics = MusicLicenseGenerator.get_audio_analytics(self.app.current_audio)
                 return f"📊 Длит: {analytics['duration']}с | RMS: {analytics['rms']} | Пик: {analytics['peak']} | DR: {analytics['dynamic_range_db']}dB"
@@ -1149,11 +1241,12 @@ class AIAssistantPanel(ctk.CTkFrame):
                     return "🎵 MP3 доступен. Кнопки скачивания под генерацией."
                 return "⚠️ MP3 — PRO функция. Введи промокод в настройках."
             else:
-                return "Не понял. Попробуй: 'обрежь до 20с', 'реверб', 'сайдчейн', 'винил', 'мастер', 'стата'"
+                return "Не понял. Попробуй: 'обрежь до 20с', 'реверб', 'сайдчейн', 'винил', 'мастер', 'стата', 'теги'"
         except Exception as e:
             return f"❌ Ошибка: {e}"
 
 
+# ===== SETTINGS =====
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, app):
         super().__init__(app)
@@ -1242,6 +1335,45 @@ class SettingsWindow(ctk.CTkToplevel):
             self.app.set_status(tr("code_fail"))
 
 
+# ===== SHORTCUTS HELP =====
+class ShortcutsWindow(ctk.CTkToplevel):
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Keyboard Shortcuts")
+        self.geometry("400x500")
+        self.configure(fg_color=T["card"])
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.transient(app)
+        self._build()
+
+    def _build(self):
+        for w in self.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(self, text="⌨️ Keyboard Shortcuts", font=("Segoe UI Variable Display", 20, "bold"), text_color=T["text_primary"]).pack(pady=(20, 16))
+        
+        shortcuts = [
+            ("Ctrl+G", "Generate track"),
+            ("Ctrl+S", "Save project"),
+            ("Ctrl+E", "Export audio"),
+            ("Ctrl+Z", "Undo"),
+            ("Ctrl+Y", "Redo"),
+            ("Space", "Play/Stop"),
+            ("F1", "This help"),
+            ("F11", "Fullscreen"),
+        ]
+        
+        for key, desc in shortcuts:
+            row = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=8)
+            row.pack(fill="x", padx=20, pady=4)
+            ctk.CTkLabel(row, text=key, font=("Consolas", 12, "bold"), text_color=T["accent"], width=100).pack(side="left", padx=10, pady=8)
+            ctk.CTkLabel(row, text=desc, font=("Segoe UI", 12), text_color=T["text_primary"]).pack(side="left", padx=10, pady=8)
+        
+        ctk.CTkButton(self, text="Close", height=40, corner_radius=10, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 13, "bold"), command=self.destroy).pack(pady=20)
+
+
+# ===== MAIN APP =====
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -1277,6 +1409,19 @@ class App(ctk.CTk):
         self.batch_var = ctk.IntVar(value=1)
         self.seed_var = ctk.BooleanVar(value=False)
         self.search_var = ctk.StringVar(value="")
+        
+        # Для Tempo Tap
+        self.tempo_taps = []
+        self.tempo_tap_active = False
+        
+        # Для Volume Meter
+        self.volume_meter_value = 0.0
+        self.volume_meter_running = False
+        
+        # Auto tags
+        self.current_tags = {}
+        self.current_fingerprint = ""
+        
         self._build_ui()
         self._bind_hotkeys()
         self.after(300, self._pulse_status)
@@ -1290,10 +1435,9 @@ class App(ctk.CTk):
         self.bind("<Control-y>", lambda e: self._redo())
         self.bind("<space>", lambda e: self._toggle_play())
         self.bind("<F11>", lambda e: self._toggle_fullscreen())
+        self.bind("<F1>", lambda e: self._show_shortcuts())
 
     def _build_ui(self):
-        self.ai_assistant = AIAssistantPanel(self, self)
-
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=24, pady=(10, 24))
 
@@ -1309,9 +1453,9 @@ class App(ctk.CTk):
         scrollbar.pack(side="right", fill="y")
         canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
+        # Grid: 2 колонки (основной контент + история), без spacer
         scrollable_frame.grid_columnconfigure(0, weight=1)
         scrollable_frame.grid_columnconfigure(1, weight=0)
-        scrollable_frame.grid_columnconfigure(2, weight=1)
         scrollable_frame.grid_rowconfigure(0, weight=1)
 
         left = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
@@ -1319,12 +1463,11 @@ class App(ctk.CTk):
         right = ctk.CTkFrame(scrollable_frame, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, width=340)
         right.grid(row=0, column=1, sticky="ns")
         right.pack_propagate(False)
-        spacer = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
-        spacer.grid(row=0, column=2, sticky="nsew")
 
         self._canvas = canvas
         self._scrollable_frame = scrollable_frame
 
+        # HEADER
         header = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         header.pack(fill="x", pady=(0, 14))
         title_row = ctk.CTkFrame(header, fg_color="transparent")
@@ -1332,13 +1475,14 @@ class App(ctk.CTk):
         ctk.CTkLabel(title_row, text="Aegis Audio Pro", font=("Segoe UI Variable Display", 30, "bold"), text_color=T["text_primary"]).pack(side="left")
         self.license_label = ctk.CTkLabel(title_row, text=f"[{LICENSE_MODE}]", font=("Segoe UI", 12, "bold"), text_color=T["success"] if LICENSE_MODE == "PRO" else T["warning"])
         self.license_label.pack(side="right", padx=(0, 10))
-        ctk.CTkButton(title_row, text="🤖 AI", width=60, height=30, corner_radius=8, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 12, "bold"), command=self._toggle_ai_assistant).pack(side="right", padx=(0, 10))
+        ctk.CTkButton(title_row, text="🤖 AI", width=60, height=30, corner_radius=8, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 12, "bold"), command=self._open_ai_assistant).pack(side="right", padx=(0, 10))
         ctk.CTkButton(title_row, text="⚙️", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._open_settings).pack(side="right", padx=(0, 10))
         self.fs_btn = ctk.CTkButton(title_row, text="⛶", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._toggle_fullscreen).pack(side="right", padx=(0, 10))
         self.counter_label = ctk.CTkLabel(title_row, text=f"{self.track_count} {tr('tracks')}", font=("Segoe UI", 12), text_color=T["text_dim"])
         self.counter_label.pack(side="right", pady=6)
         ctk.CTkLabel(header, text="Royalty-free AI audio • Multilingual licenses • QR verified", font=("Segoe UI", 13), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(0, 18))
 
+        # STATUS
         status_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         status_card.pack(fill="x", pady=(0, 14))
         if self.model_loaded:
@@ -1350,6 +1494,7 @@ class App(ctk.CTk):
         self.progress_bar.pack(fill="x", padx=22, pady=(0, 14))
         self.progress_bar.set(1.0 if self.model_loaded else 0)
 
+        # PROMPT
         prompt_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         prompt_card.pack(fill="x", pady=(0, 14))
         prompt_header = ctk.CTkFrame(prompt_card, fg_color="transparent")
@@ -1378,6 +1523,7 @@ class App(ctk.CTk):
             if desc:
                 chip.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
 
+        # SETTINGS
         settings_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         settings_card.pack(fill="x", pady=(0, 14))
         self._add_slider_row(settings_card, tr("duration"), 5, 120, 10, self._update_duration_label)
@@ -1407,6 +1553,7 @@ class App(ctk.CTk):
         self.seed_entry = ctk.CTkEntry(row, width=90, placeholder_text="42", fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=10, state="disabled")
         self.seed_entry.pack(side="left", padx=10)
 
+        # ACTION BUTTONS
         btn_frame = ctk.CTkFrame(left, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(0, 14))
         self.generate_btn = ctk.CTkButton(btn_frame, text=tr("generate"), height=58, corner_radius=18, font=("Segoe UI Variable Display", 17, "bold"), fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", command=self._on_generate)
@@ -1414,6 +1561,7 @@ class App(ctk.CTk):
         self.export_btn = ctk.CTkButton(btn_frame, text=tr("export"), height=58, corner_radius=18, font=("Segoe UI", 14, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=self._export_audio, state="disabled")
         self.export_btn.pack(side="left", fill="x", expand=True)
 
+        # DOWNLOAD BUTTONS
         download_frame = ctk.CTkFrame(left, fg_color="transparent")
         download_frame.pack(fill="x", pady=(0, 14))
         self.download_wav_btn = ctk.CTkButton(download_frame, text=tr("download_wav"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=lambda: self._quick_download("wav"), state="disabled")
@@ -1425,6 +1573,27 @@ class App(ctk.CTk):
         self.game_ready_btn = ctk.CTkButton(download_frame, text=tr("game_ready"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["success"], hover_color="#2BA84A", text_color="#FFFFFF", command=self._export_game_ready, state="disabled")
         self.game_ready_btn.pack(side="left", fill="x", expand=True)
 
+        # NEW FEATURES ROW
+        new_features_frame = ctk.CTkFrame(left, fg_color="transparent")
+        new_features_frame.pack(fill="x", pady=(0, 14))
+        self.tempo_tap_btn = ctk.CTkButton(new_features_frame, text=tr("tempo_tap"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=self._tempo_tap)
+        self.tempo_tap_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.auto_tags_btn = ctk.CTkButton(new_features_frame, text=tr("auto_tags"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=self._generate_auto_tags, state="disabled")
+        self.auto_tags_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.fingerprint_btn = ctk.CTkButton(new_features_frame, text=tr("fingerprint"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=self._copy_fingerprint, state="disabled")
+        self.fingerprint_btn.pack(side="left", fill="x", expand=True)
+
+        # VOLUME METER
+        volume_frame = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=12, border_color=T["border"], border_width=1)
+        volume_frame.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(volume_frame, text=tr("volume_meter"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=15, pady=(10, 8))
+        self.volume_meter_bar = ctk.CTkProgressBar(volume_frame, height=20, corner_radius=10, progress_color=T["accent"], fg_color=T["border"])
+        self.volume_meter_bar.pack(fill="x", padx=15, pady=(0, 10))
+        self.volume_meter_bar.set(0)
+        self.volume_meter_label = ctk.CTkLabel(volume_frame, text="0%", font=("Segoe UI", 10), text_color=T["text_dim"])
+        self.volume_meter_label.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # WAVE
         self.wave_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, height=150)
         self.wave_card.pack(fill="x", pady=(0, 14))
         self.wave_card.pack_propagate(False)
@@ -1436,6 +1605,7 @@ class App(ctk.CTk):
         self.wave_placeholder = ctk.CTkLabel(self.wave_card, text="Visualization will appear after generation", font=("Segoe UI", 12), text_color=T["text_dim"])
         self.wave_placeholder.pack(expand=True)
 
+        # EFFECTS
         effects_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         effects_card.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(effects_card, text=tr("effects"), font=("Segoe UI Variable Display", 14, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=22, pady=(18, 12))
@@ -1459,12 +1629,21 @@ class App(ctk.CTk):
         for c in range(4):
             effects_grid.grid_columnconfigure(c, weight=1)
 
+        # METADATA
         meta_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         meta_card.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(meta_card, text=tr("metadata"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
         self.meta_text = ctk.CTkLabel(meta_card, text="BPM: -- | Key: -- | Duration: -- | RMS: --", font=("Consolas", 12), text_color=T["text_primary"], wraplength=700, justify="left")
         self.meta_text.pack(anchor="w", padx=22, pady=(0, 16))
 
+        # TAGS
+        tags_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
+        tags_card.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(tags_card, text="🏷️ AUTO TAGS", font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
+        self.tags_text = ctk.CTkLabel(tags_card, text="Genre: -- | Mood: -- | Energy: -- | Fingerprint: --", font=("Consolas", 12), text_color=T["text_primary"], wraplength=700, justify="left")
+        self.tags_text.pack(anchor="w", padx=22, pady=(0, 16))
+
+        # RESULT
         result_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         result_card.pack(fill="x")
         ctk.CTkLabel(result_card, text=tr("result"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
@@ -1479,6 +1658,7 @@ class App(ctk.CTk):
         self.open_btn = ctk.CTkButton(btn_row, text=tr("folder"), width=100, height=40, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 13, "bold"), command=self._open_folder, state="disabled")
         self.open_btn.pack(side="left")
 
+        # RIGHT PANEL
         ctk.CTkLabel(right, text=tr("history"), font=("Segoe UI Variable Display", 18, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=20, pady=(20, 14))
         self.search_entry = ctk.CTkEntry(right, placeholder_text=tr("search"), fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=10, textvariable=self.search_var)
         self.search_entry.pack(fill="x", padx=12, pady=(0, 10))
@@ -1492,11 +1672,69 @@ class App(ctk.CTk):
         self.history_empty = ctk.CTkLabel(self.history_scroll, text=tr("empty_history"), font=("Segoe UI", 12), text_color=T["text_dim"], justify="center")
         self.history_empty.pack(expand=True, pady=40)
 
-    def _toggle_ai_assistant(self):
-        if self.ai_assistant.is_expanded:
-            self.ai_assistant._collapse()
+    def _open_ai_assistant(self):
+        AIAssistantWindow(self)
+
+    def _show_shortcuts(self):
+        ShortcutsWindow(self)
+
+    def _tempo_tap(self):
+        """Tempo Tap — тапай в ритм для определения BPM"""
+        current_time = time.time()
+        self.tempo_taps.append(current_time)
+        
+        # Удаляем тапы старше 5 секунд
+        self.tempo_taps = [t for t in self.tempo_taps if current_time - t < 5]
+        
+        if len(self.tempo_taps) >= 2:
+            intervals = [self.tempo_taps[i+1] - self.tempo_taps[i] for i in range(len(self.tempo_taps)-1)]
+            avg_interval = sum(intervals) / len(intervals)
+            bpm = round(60 / avg_interval)
+            self.bpm_entry.delete(0, "end")
+            self.bpm_entry.insert(0, str(bpm))
+            self.set_status(f"{tr('bpm_detected')}: {bpm}")
+        
+        # Визуальный фидбек
+        self.tempo_tap_btn.configure(text=f"Tap! ({len(self.tempo_taps)})")
+        self.after(200, lambda: self.tempo_tap_btn.configure(text=tr("tempo_tap")))
+
+    def _generate_auto_tags(self):
+        """Генерирует автоматические теги"""
+        if not self.current_audio:
+            self.set_status(tr("generate_first"))
+            return
+        
+        bpm = self.generator.detect_bpm(self.current_audio)
+        tags = MusicLicenseGenerator.generate_tags(self.current_audio, bpm)
+        fingerprint = MusicLicenseGenerator.generate_fingerprint(self.current_audio)
+        
+        self.current_tags = tags
+        self.current_fingerprint = fingerprint
+        
+        tags_text = f"Genre: {tags['genre']} | Mood: {tags['mood']} | Energy: {tags['energy']}% | Fingerprint: {fingerprint}"
+        self.tags_text.configure(text=tags_text)
+        self.set_status(tr("tags_generated"))
+
+    def _copy_fingerprint(self):
+        """Копирует fingerprint в буфер обмена"""
+        if not self.current_fingerprint:
+            self.set_status(tr("generate_first"))
+            return
+        pyperclip.copy(self.current_fingerprint)
+        self.set_status(tr("fingerprint_copied"))
+
+    def _update_volume_meter(self):
+        """Обновляет индикатор громкости"""
+        if self.is_playing and self.current_audio is not None:
+            # Вычисляем RMS текущего фрагмента
+            rms = np.sqrt(np.mean(self.current_audio ** 2))
+            volume_percent = min(100, int(rms * 200))
+            self.volume_meter_bar.set(volume_percent / 100)
+            self.volume_meter_label.configure(text=f"{volume_percent}%")
+            self.after(100, self._update_volume_meter)
         else:
-            self.ai_assistant._expand()
+            self.volume_meter_bar.set(0)
+            self.volume_meter_label.configure(text="0%")
 
     def _quick_download(self, format):
         if not self.current_audio:
@@ -1601,6 +1839,10 @@ class App(ctk.CTk):
             meta = self.meta_text.cget("text")
         except:
             meta = "BPM: -- | Key: -- | Duration: -- | RMS: --"
+        try:
+            tags = self.tags_text.cget("text")
+        except:
+            tags = "Genre: -- | Mood: -- | Energy: -- | Fingerprint: --"
         for w in self.winfo_children():
             w.destroy()
         self._build_ui()
@@ -1630,6 +1872,7 @@ class App(ctk.CTk):
                 self.status_label.configure(text_color=T["warning"])
             self.result_text.configure(text=info, text_color=T["text_primary"])
             self.meta_text.configure(text=meta, text_color=T["text_primary"])
+            self.tags_text.configure(text=tags, text_color=T["text_primary"])
             if self.current_audio is not None:
                 self._draw_waveform(self.current_audio)
                 self.play_btn.configure(state="normal")
@@ -1640,6 +1883,8 @@ class App(ctk.CTk):
                 self.download_mp3_btn.configure(state="normal")
                 self.download_ogg_btn.configure(state="normal")
                 self.game_ready_btn.configure(state="normal")
+                self.auto_tags_btn.configure(state="normal")
+                self.fingerprint_btn.configure(state="normal")
             self._update_history()
             self._update_favorites()
         except Exception as e:
@@ -1864,7 +2109,6 @@ class App(ctk.CTk):
         self.is_playing = True
         def play_alternating():
             sd.play(np.squeeze(self.original_audio), SAMPLE_RATE)
-            import time
             time.sleep(len(self.original_audio) / SAMPLE_RATE)
             sd.play(np.squeeze(self.current_audio), SAMPLE_RATE)
             time.sleep(len(self.current_audio) / SAMPLE_RATE)
@@ -1918,6 +2162,8 @@ class App(ctk.CTk):
         self.download_mp3_btn.configure(state="disabled")
         self.download_ogg_btn.configure(state="disabled")
         self.game_ready_btn.configure(state="disabled")
+        self.auto_tags_btn.configure(state="disabled")
+        self.fingerprint_btn.configure(state="disabled")
         self.set_progress(0)
         self.status_label.configure(text_color=T["accent"])
         threading.Thread(target=self._generate_worker, args=(prompt, duration, user_name, seed, temperature, guidance_scale, loop_mode, batch_count), daemon=True).start()
@@ -1959,6 +2205,9 @@ class App(ctk.CTk):
                 info += f"\nVariants generated: {batch_count}"
             preview_samples = best_audio[::100]
             preview_str = ",".join(f"{v:.2f}" for v in preview_samples[:200])
+            tags = MusicLicenseGenerator.generate_tags(best_audio, bpm)
+            fingerprint = MusicLicenseGenerator.generate_fingerprint(best_audio)
+            tags_str = json.dumps(tags)
             track_id = self.db.add_track(
                 prompt=prompt, duration=duration, bpm=bpm, key=key,
                 rms=analytics['rms'], peak=analytics['peak'],
@@ -1966,13 +2215,15 @@ class App(ctk.CTk):
                 license_type=license_type, licensee=user_name,
                 file_hash=file_hash, file_path=zip_file,
                 seed=seed, temperature=temperature, guidance_scale=guidance_scale,
-                loop_mode=1 if loop_mode else 0, audio_preview=preview_str
+                loop_mode=1 if loop_mode else 0, audio_preview=preview_str,
+                tags=tags_str, fingerprint=fingerprint
             )
-            self.history.insert(0, {"id": track_id, "time": datetime.now().strftime("%H:%M"), "prompt": prompt[:60] + "..." if len(prompt) > 60 else prompt, "duration": dur_str, "file": zip_file, "bpm": bpm, "hash": file_hash, "favorite": False, "preview": preview_str})
+            self.history.insert(0, {"id": track_id, "time": datetime.now().strftime("%H:%M"), "prompt": prompt[:60] + "..." if len(prompt) > 60 else prompt, "duration": dur_str, "file": zip_file, "bpm": bpm, "hash": file_hash, "favorite": False, "preview": preview_str, "tags": tags, "fingerprint": fingerprint})
             self.history = self.history[:20]
             def done():
                 self.result_text.configure(text=info, text_color=T["text_primary"])
                 self.meta_text.configure(text=f"BPM: {bpm or '--'} | Key: {key or '--'} | Duration: {dur_str} | RMS: {rms_val} | Loop: {'Yes' if loop_mode else 'No'}", text_color=T["text_primary"])
+                self.tags_text.configure(text=f"Genre: {tags['genre']} | Mood: {tags['mood']} | Energy: {tags['energy']}% | Fingerprint: {fingerprint}", text_color=T["text_primary"])
                 self.generate_btn.configure(state="normal", text=tr("generate"))
                 self.play_btn.configure(state="normal")
                 self.save_btn.configure(state="normal")
@@ -1982,6 +2233,8 @@ class App(ctk.CTk):
                 self.download_mp3_btn.configure(state="normal")
                 self.download_ogg_btn.configure(state="normal")
                 self.game_ready_btn.configure(state="normal")
+                self.auto_tags_btn.configure(state="normal")
+                self.fingerprint_btn.configure(state="normal")
                 self.counter_label.configure(text=f"{self.track_count} {tr('tracks')}")
                 self.set_status(tr("ready"))
                 self.status_label.configure(text_color=T["success"])
@@ -2142,10 +2395,13 @@ class App(ctk.CTk):
         if self.is_playing:
             sd.stop()
             self.is_playing = False
+            self.volume_meter_running = False
             self.play_btn.configure(text=tr("play"))
         else:
             sd.play(np.squeeze(self.current_audio), SAMPLE_RATE)
             self.is_playing = True
+            self.volume_meter_running = True
+            self._update_volume_meter()
             self.play_btn.configure(text=tr("stop"))
 
     def _open_folder(self):
