@@ -83,6 +83,37 @@ PRESETS = {
     "Electronic": {"prompt": "upbeat electronic dance music, energetic synths, driving beat, 128 bpm", "bpm": 128, "key": "A major"},
 }
 
+# ===== TOOLTIP DESCRIPTIONS (RU) =====
+EFFECT_DESCRIPTIONS = {
+    "reverb": "Эхо/пространство. Добавляет эффект 'большого зала' — звук становится объёмнее и шире.",
+    "delay": "Повтор. Звук повторяется с задержкой, как ритмичное эхо.",
+    "pitch_up": "Выше на 2 полутона. Мелодия звучит светлее и выше.",
+    "pitch_down": "Ниже на 2 полутона. Мелодия звучит темнее и ниже.",
+    "speed_up": "Быстрее на 20%. Ускоряет трек, темп становится выше.",
+    "reverse": "Задом наперёд. Проигрывает трек в обратную сторону.",
+    "bass": "Усиление баса. Делает низкие частоты громче — звук 'жирнее'.",
+    "normalize": "Выровнять громкость. Приводит трек к стандартной громкости.",
+    "master": "Авто-мастеринг. Делает трек громче и плотнее, как в студийных релизах.",
+    "harmonizer": "Гармонии. Добавляет дополнительные ноты — звук богаче и насыщеннее.",
+    "gate": "Убрать шум. Глушит тихие участки (шипение, фон).",
+    "ab": "Сравнить. По очереди играет оригинал и обработанный вариант.",
+    "undo": "Отменить. Возвращает трек к предыдущему состоянию.",
+    "redo": "Вернуть. Повторяет отменённое действие.",
+    "copy_hash": "Копировать хеш. Кладёт SHA-256 файла в буфер обмена.",
+    "stems": "Разделить. Разбивает трек на бас / средние / высокие частоты отдельными файлами.",
+}
+
+PRESET_DESCRIPTIONS = {
+    "Synthwave": "Ретро-электроника 80-х, как в киберпанк-гонках.",
+    "Cyberpunk": "Жёсткий индастриал-техно с искажениями.",
+    "Epic Orchestral": "Мощный оркестр для трейлеров и финальных битв.",
+    "Lo-fi Chill": "Спокойный бит для фона и учёбы.",
+    "Trap": "Агрессивный хип-хоп с глубоким басом 808.",
+    "Ambient": "Медитативный космический эмбиент без ритма.",
+    "Dark Cinematic": "Тревожная атмосфера для хоррора и напряжённых сцен.",
+    "Electronic": "Энергичный танцевальный трек с драйвом.",
+}
+
 CHORD_PROGRESSIONS = [
     ("Pop", "I-V-vi-IV", "C G Am F"),
     ("Emotional", "vi-IV-I-V", "Am F C G"),
@@ -802,7 +833,7 @@ class DynamicIsland(ctk.CTkFrame):
             return f"❌ Error: {e}"
 
 
-# ===== SETTINGS WINDOW =====
+# ===== SETTINGS WINDOW (FIXED: no grab_set, no freeze) =====
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, app):
         super().__init__(app)
@@ -813,7 +844,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.resizable(False, False)
         self.attributes("-topmost", True)
         self.transient(app)
-        self.grab_set()
+        # grab_set() УБРАН — он был причиной зависания при пересоздании виджетов
         self._build()
 
     def _build(self):
@@ -852,8 +883,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def _set_lang(self, lang):
         global CURRENT_LANG
         CURRENT_LANG = lang
-        self.app.set_status(f"Language: {lang.upper()}")
-        self.app._refresh_ui_texts()
+        self.app._rebuild_ui()
         self._build()
 
     def _set_theme(self, theme):
@@ -861,8 +891,7 @@ class SettingsWindow(ctk.CTkToplevel):
         CURRENT_THEME = theme
         T = THEMES[theme]
         ctk.set_appearance_mode(theme)
-        self.app._apply_theme()
-        self.configure(fg_color=T["card"])
+        self.app._rebuild_ui()
         self._build()
 
 
@@ -894,6 +923,7 @@ class App(ctk.CTk):
         self._wave_ax = None
         self._wave_canvas = None
         self._view_mode = "waveform"
+        self._tooltip = None
         self.undo_stack = []
         self.redo_stack = []
         self.max_undo = 20
@@ -966,7 +996,11 @@ class App(ctk.CTk):
         chips_frame = ctk.CTkFrame(prompt_card, fg_color="transparent")
         chips_frame.pack(fill="x", padx=22, pady=(0, 18))
         for name, data in PRESETS.items():
-            ctk.CTkButton(chips_frame, text=name, width=100, height=30, corner_radius=15, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_secondary"], font=("Segoe UI", 11), command=lambda t=data["prompt"]: self._set_prompt(t)).pack(side="left", padx=(0, 6))
+            chip = ctk.CTkButton(chips_frame, text=name, width=100, height=30, corner_radius=15, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_secondary"], font=("Segoe UI", 11), command=lambda t=data["prompt"]: self._set_prompt(t))
+            chip.pack(side="left", padx=(0, 6))
+            desc = PRESET_DESCRIPTIONS.get(name, "")
+            if desc:
+                chip.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
         settings_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         settings_card.pack(fill="x", pady=(0, 14))
         self._add_slider_row(settings_card, tr("duration"), 5, 120, 10, self._update_duration_label)
@@ -1029,6 +1063,9 @@ class App(ctk.CTk):
             col_idx = i % 6
             btn = ctk.CTkButton(effects_grid, text=text, width=120, height=36, corner_radius=10, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 10), command=lambda c=cmd: self._handle_effect(c))
             btn.grid(row=row_idx, column=col_idx, padx=4, pady=4, sticky="ew")
+            desc = EFFECT_DESCRIPTIONS.get(cmd, "")
+            if desc:
+                btn.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
         for c in range(6):
             effects_grid.grid_columnconfigure(c, weight=1)
         meta_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
@@ -1062,21 +1099,81 @@ class App(ctk.CTk):
         self.history_empty = ctk.CTkLabel(self.history_scroll, text=tr("empty_history"), font=("Segoe UI", 12), text_color=T["text_dim"], justify="center")
         self.history_empty.pack(expand=True, pady=40)
 
-    def _apply_theme(self):
-        self.configure(fg_color=T["app"])
-        self._canvas.configure(bg=T["app"])
+    # ===== TOOLTIP (right-click) =====
+    def _show_tooltip(self, event, text):
+        if self._tooltip:
+            try:
+                self._tooltip.destroy()
+            except:
+                pass
+            self._tooltip = None
+        tw = ctk.CTkToplevel(self)
+        tw.overrideredirect(True)
+        tw.attributes("-topmost", True)
+        tw.configure(fg_color=T["card"], border_color=T["accent"], border_width=1)
+        x = event.x_root + 14
+        y = event.y_root + 14
+        tw.geometry(f"+{x}+{y}")
+        ctk.CTkLabel(tw, text=text, font=("Segoe UI", 11), text_color=T["text_primary"], wraplength=280, justify="left").pack(padx=14, pady=12)
+        tw.update_idletasks()
+        def close(e=None):
+            try:
+                tw.destroy()
+            except:
+                pass
+            if self._tooltip is tw:
+                self._tooltip = None
+        tw.bind("<Button-1>", close)
+        tw.bind("<Button-3>", close)
+        tw.after(6000, close)
+        self._tooltip = tw
 
-    def _refresh_ui_texts(self):
+    # ===== REBUILD UI (theme/language switch, no freeze) =====
+    def _rebuild_ui(self):
+        # Сохраняем состояние
         try:
-            self.generate_btn.configure(text=tr("generate"))
-            self.export_btn.configure(text=tr("export"))
-            self.save_btn.configure(text=tr("save"))
-            self.play_btn.configure(text=tr("play"))
-            self.open_btn.configure(text=tr("folder"))
-            self.result_text.configure(text=tr("empty_result"))
-            self.view_btn.configure(text=tr("spectrum") if self._view_mode == "waveform" else tr("waveform"))
+            prompt = self.prompt_box.get("1.0", "end").strip()
         except:
-            pass
+            prompt = ""
+        try:
+            dur = self.duration_slider.get()
+            temp = self.temp_slider.get()
+            guid = self.guidance_slider.get()
+        except:
+            dur, temp, guid = 10, 1.0, 3.0
+        try:
+            user = self.user_entry.get()
+        except:
+            user = ""
+        # Уничтожаем всё
+        for w in self.winfo_children():
+            w.destroy()
+        # Перестраиваем
+        self._build_ui()
+        # Восстанавливаем состояние
+        try:
+            self.prompt_box.delete("1.0", "end")
+            self.prompt_box.insert("1.0", prompt)
+            self.duration_slider.set(dur)
+            self.temp_slider.set(temp)
+            self.guidance_slider.set(guid)
+            self.user_entry.delete(0, "end")
+            self.user_entry.insert(0, user)
+            self._update_duration_label(dur)
+            self._update_temp_label(temp)
+            self._update_guidance_label(guid)
+            self._toggle_seed()
+            self.counter_label.configure(text=f"{self.track_count} {tr('tracks')}")
+            if self.current_audio is not None:
+                self._draw_waveform(self.current_audio)
+                self.play_btn.configure(state="normal")
+                self.save_btn.configure(state="normal")
+                self.export_btn.configure(state="normal")
+                self.open_btn.configure(state="normal")
+            self._update_history()
+            self._update_favorites()
+        except Exception as e:
+            print("Rebuild error:", e)
 
     def _open_settings(self):
         SettingsWindow(self)
@@ -1170,8 +1267,8 @@ class App(ctk.CTk):
     def _toggle_seed(self):
         if self.seed_var.get():
             self.seed_entry.configure(state="normal")
-            self.seed_entry.delete(0, "end")
-            self.seed_entry.insert(0, "42")
+            if not self.seed_entry.get():
+                self.seed_entry.insert(0, "42")
         else:
             self.seed_entry.configure(state="disabled")
             self.seed_entry.delete(0, "end")
