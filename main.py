@@ -25,14 +25,12 @@ import pyperclip
 import pretty_midi
 import librosa
 
-# ===== PATH =====
 if getattr(sys, 'frozen', False):
     script_dir = os.path.dirname(sys.executable)
 else:
     script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
-# ===== THEMES =====
 THEMES = {
     "dark": {
         "app": "#000000", "card": "#1A1A1A", "card_hover": "#2A2A2A",
@@ -83,7 +81,6 @@ PRESETS = {
     "Electronic": {"prompt": "upbeat electronic dance music, energetic synths, driving beat, 128 bpm", "bpm": 128, "key": "A major"},
 }
 
-# ===== TOOLTIP DESCRIPTIONS (RU) =====
 EFFECT_DESCRIPTIONS = {
     "reverb": "Эхо/пространство. Добавляет эффект 'большого зала' — звук становится объёмнее и шире.",
     "delay": "Повтор. Звук повторяется с задержкой, как ритмичное эхо.",
@@ -139,20 +136,17 @@ LANG = {
         "licensee": "Лицензиат", "fixed_seed": "Фикс. seed", "loop_mode": "🔄 Loop Mode",
         "batch": "Вариантов:", "result": "РЕЗУЛЬТАТ", "metadata": "МЕТАДАННЫЕ ТРЕКА",
         "history": "История", "effects": "🎛️ AUDIO EFFECTS", "favorites": "⭐ Избранное",
-        "search": "🔍 Поиск...", "settings": "⚙️", "visualization": "ВИЗУАЛИЗАЦИЯ",
+        "search": "🔍 Поиск...", "visualization": "ВИЗУАЛИЗАЦИЯ",
         "waveform": "🌊 Waveform", "spectrum": "📊 Spectrum",
         "empty_result": "Пусто. Нажми «Сгенерировать».",
         "empty_history": "Треки появятся\nздесь", "no_favorites": "Нет избранных",
-        "generating": "Генерация...", "ready": "Готово", "error": "Ошибка",
+        "generating": "Генерация...", "ready": "Готово",
         "model_loading": "Загрузка модели...", "model_ready": "Модель готова",
         "enter_prompt": "Введи описание музыки", "seed_number": "Seed должен быть числом",
         "no_track": "Нет трека", "exported": "Экспортировано", "export_error": "Ошибка экспорта",
         "project_saved": "Проект сохранён", "hash_copied": "Хеш скопирован",
         "applied": "Применено", "effect_error": "Ошибка эффекта",
         "generate_first": "Сначала сгенерируй трек", "undo": "Отмена", "redo": "Повтор",
-        "theme": "Тема", "language": "Язык", "license_mode": "Режим лицензии",
-        "close": "Закрыть", "send": "Отправить", "type_command": "Введи команду...",
-        "ai_assistant": "AI Ассистент", "collapse": "Свернуть",
         "tracks": "треков", "all": "Все",
     },
     "en": {
@@ -163,20 +157,17 @@ LANG = {
         "licensee": "Licensee", "fixed_seed": "Fixed seed", "loop_mode": "🔄 Loop Mode",
         "batch": "Variants:", "result": "RESULT", "metadata": "TRACK METADATA",
         "history": "History", "effects": "🎛️ AUDIO EFFECTS", "favorites": "⭐ Favorites",
-        "search": "🔍 Search...", "settings": "⚙️", "visualization": "VISUALIZATION",
+        "search": "🔍 Search...", "visualization": "VISUALIZATION",
         "waveform": "🌊 Waveform", "spectrum": "📊 Spectrum",
         "empty_result": "Empty. Click Generate.",
         "empty_history": "Tracks will appear\nhere", "no_favorites": "No favorites",
-        "generating": "Generating...", "ready": "Ready", "error": "Error",
+        "generating": "Generating...", "ready": "Ready",
         "model_loading": "Loading model...", "model_ready": "Model ready",
         "enter_prompt": "Enter description", "seed_number": "Seed must be number",
         "no_track": "No track", "exported": "Exported", "export_error": "Export error",
         "project_saved": "Project saved", "hash_copied": "Hash copied",
         "applied": "Applied", "effect_error": "Effect error",
         "generate_first": "Generate a track first", "undo": "Undo", "redo": "Redo",
-        "theme": "Theme", "language": "Language", "license_mode": "License mode",
-        "close": "Close", "send": "Send", "type_command": "Type command...",
-        "ai_assistant": "AI Assistant", "collapse": "Collapse",
         "tracks": "tracks", "all": "All",
     }
 }
@@ -185,7 +176,6 @@ def tr(key):
     return LANG[CURRENT_LANG].get(key, key)
 
 
-# ===== DATABASE =====
 class Database:
     def __init__(self, db_path="aegis_audio.db"):
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -222,24 +212,6 @@ class Database:
         self.cursor.execute("UPDATE tracks SET favorite = NOT favorite WHERE id = ?", (track_id,))
         self.conn.commit()
 
-    def save_preset(self, name, settings):
-        self.cursor.execute('INSERT OR REPLACE INTO presets (name, settings, created_at) VALUES (?,?,?)',
-            (name, json.dumps(settings), datetime.now().isoformat()))
-        self.conn.commit()
-
-    def get_presets(self):
-        self.cursor.execute("SELECT * FROM presets ORDER BY created_at DESC")
-        return self.cursor.fetchall()
-
-    def load_preset(self, name):
-        self.cursor.execute("SELECT settings FROM presets WHERE name = ?", (name,))
-        row = self.cursor.fetchone()
-        return json.loads(row[0]) if row else None
-
-    def delete_preset(self, name):
-        self.cursor.execute("DELETE FROM presets WHERE name = ?", (name,))
-        self.conn.commit()
-
     def get_stats(self):
         self.cursor.execute("SELECT COUNT(*) FROM tracks")
         total = self.cursor.fetchone()[0]
@@ -248,7 +220,6 @@ class Database:
         return {"total": total, "favorites": favs}
 
 
-# ===== MUSIC GENERATOR =====
 class MusicLicenseGenerator:
     def __init__(self, status_callback=None, progress_callback=None):
         self.status = status_callback or (lambda x: None)
@@ -668,7 +639,6 @@ Issued by: Aegis Audio Pro (Free Tier)"""
         return zip_filename
 
 
-# ===== DYNAMIC ISLAND =====
 class DynamicIsland(ctk.CTkFrame):
     def __init__(self, master, app_instance):
         super().__init__(master, fg_color="transparent")
@@ -833,7 +803,6 @@ class DynamicIsland(ctk.CTkFrame):
             return f"❌ Error: {e}"
 
 
-# ===== SETTINGS WINDOW (FIXED: no grab_set, no freeze) =====
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, app):
         super().__init__(app)
@@ -844,7 +813,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self.resizable(False, False)
         self.attributes("-topmost", True)
         self.transient(app)
-        # grab_set() УБРАН — он был причиной зависания при пересоздании виджетов
         self._build()
 
     def _build(self):
@@ -895,7 +863,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self._build()
 
 
-# ===== MAIN APP =====
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -949,22 +916,34 @@ class App(ctk.CTk):
         self.island = DynamicIsland(self, self)
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=24, pady=(10, 24))
+
         canvas = ctk.CTkCanvas(main, bg=T["app"], highlightthickness=0)
         scrollbar = ctk.CTkScrollbar(main, orientation="vertical", command=canvas.yview)
         scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
+
         scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        win = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        # ФИКС 3: растягиваем scrollable_frame на всю ширину canvas
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
         canvas.configure(yscrollcommand=scrollbar.set)
+
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # ФИКС 3: используем grid вместо pack для растягивания колонок
+        scrollable_frame.grid_columnconfigure(0, weight=1)
+        scrollable_frame.grid_columnconfigure(1, weight=0)
+        scrollable_frame.grid_rowconfigure(0, weight=1)
+
         left = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
-        left.pack(side="left", fill="both", expand=True)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         right = ctk.CTkFrame(scrollable_frame, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, width=340)
-        right.pack(side="right", fill="y", padx=(16, 0))
+        right.grid(row=0, column=1, sticky="ns")
         right.pack_propagate(False)
         self._canvas = canvas
         self._scrollable_frame = scrollable_frame
+
         header = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         header.pack(fill="x", pady=(0, 14))
         title_row = ctk.CTkFrame(header, fg_color="transparent")
@@ -974,16 +953,21 @@ class App(ctk.CTk):
         self.license_label.pack(side="right", padx=(0, 10))
         ctk.CTkButton(title_row, text="⚙️", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._open_settings).pack(side="right", padx=(0, 10))
         self.fs_btn = ctk.CTkButton(title_row, text="⛶", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._toggle_fullscreen).pack(side="right", padx=(0, 10))
-        self.counter_label = ctk.CTkLabel(title_row, text=f"0 {tr('tracks')}", font=("Segoe UI", 12), text_color=T["text_dim"])
+        self.counter_label = ctk.CTkLabel(title_row, text=f"{self.track_count} {tr('tracks')}", font=("Segoe UI", 12), text_color=T["text_dim"])
         self.counter_label.pack(side="right", pady=6)
         ctk.CTkLabel(header, text="Royalty-free AI audio with cryptographic licensing", font=("Segoe UI", 13), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(0, 18))
+
         status_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         status_card.pack(fill="x", pady=(0, 14))
-        self.status_label = ctk.CTkLabel(status_card, text="Initializing...", font=("Consolas", 12), text_color=T["warning"], anchor="w")
+        if self.model_loaded:
+            self.status_label = ctk.CTkLabel(status_card, text=tr("model_ready"), font=("Consolas", 12), text_color=T["success"], anchor="w")
+        else:
+            self.status_label = ctk.CTkLabel(status_card, text=tr("model_loading"), font=("Consolas", 12), text_color=T["warning"], anchor="w")
         self.status_label.pack(fill="x", padx=22, pady=(14, 8))
         self.progress_bar = ctk.CTkProgressBar(status_card, height=6, corner_radius=3, progress_color=T["accent"], fg_color=T["border"])
         self.progress_bar.pack(fill="x", padx=22, pady=(0, 14))
-        self.progress_bar.set(0)
+        self.progress_bar.set(1.0 if self.model_loaded else 0)
+
         prompt_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         prompt_card.pack(fill="x", pady=(0, 14))
         prompt_header = ctk.CTkFrame(prompt_card, fg_color="transparent")
@@ -1001,6 +985,7 @@ class App(ctk.CTk):
             desc = PRESET_DESCRIPTIONS.get(name, "")
             if desc:
                 chip.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
+
         settings_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         settings_card.pack(fill="x", pady=(0, 14))
         self._add_slider_row(settings_card, tr("duration"), 5, 120, 10, self._update_duration_label)
@@ -1029,12 +1014,14 @@ class App(ctk.CTk):
         self.seed_var.trace("w", lambda *a: self._toggle_seed())
         self.seed_entry = ctk.CTkEntry(row, width=90, placeholder_text="42", fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=10, state="disabled")
         self.seed_entry.pack(side="left", padx=10)
+
         btn_frame = ctk.CTkFrame(left, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(0, 14))
         self.generate_btn = ctk.CTkButton(btn_frame, text=tr("generate"), height=58, corner_radius=18, font=("Segoe UI Variable Display", 17, "bold"), fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", command=self._on_generate)
         self.generate_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self.export_btn = ctk.CTkButton(btn_frame, text=tr("export"), height=58, corner_radius=18, font=("Segoe UI", 14, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=self._export_audio, state="disabled")
         self.export_btn.pack(side="left", fill="x", expand=True)
+
         self.wave_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, height=150)
         self.wave_card.pack(fill="x", pady=(0, 14))
         self.wave_card.pack_propagate(False)
@@ -1045,6 +1032,7 @@ class App(ctk.CTk):
         self.view_btn.pack(side="right")
         self.wave_placeholder = ctk.CTkLabel(self.wave_card, text="Visualization will appear after generation", font=("Segoe UI", 12), text_color=T["text_dim"])
         self.wave_placeholder.pack(expand=True)
+
         effects_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         effects_card.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(effects_card, text=tr("effects"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
@@ -1068,11 +1056,13 @@ class App(ctk.CTk):
                 btn.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
         for c in range(6):
             effects_grid.grid_columnconfigure(c, weight=1)
+
         meta_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         meta_card.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(meta_card, text=tr("metadata"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
         self.meta_text = ctk.CTkLabel(meta_card, text="BPM: -- | Key: -- | Duration: -- | RMS: --", font=("Consolas", 11), text_color=T["text_dim"], wraplength=700, justify="left")
         self.meta_text.pack(anchor="w", padx=22, pady=(0, 16))
+
         result_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         result_card.pack(fill="x")
         ctk.CTkLabel(result_card, text=tr("result"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
@@ -1086,6 +1076,7 @@ class App(ctk.CTk):
         self.save_btn.pack(side="left", padx=(0, 8))
         self.open_btn = ctk.CTkButton(btn_row, text=tr("folder"), width=100, height=36, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 12), command=self._open_folder, state="disabled")
         self.open_btn.pack(side="left")
+
         ctk.CTkLabel(right, text=tr("history"), font=("Segoe UI Variable Display", 18, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=20, pady=(20, 14))
         self.search_entry = ctk.CTkEntry(right, placeholder_text=tr("search"), fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=10, textvariable=self.search_var)
         self.search_entry.pack(fill="x", padx=12, pady=(0, 10))
@@ -1099,7 +1090,6 @@ class App(ctk.CTk):
         self.history_empty = ctk.CTkLabel(self.history_scroll, text=tr("empty_history"), font=("Segoe UI", 12), text_color=T["text_dim"], justify="center")
         self.history_empty.pack(expand=True, pady=40)
 
-    # ===== TOOLTIP (right-click) =====
     def _show_tooltip(self, event, text):
         if self._tooltip:
             try:
@@ -1128,9 +1118,7 @@ class App(ctk.CTk):
         tw.after(6000, close)
         self._tooltip = tw
 
-    # ===== REBUILD UI (theme/language switch, no freeze) =====
     def _rebuild_ui(self):
-        # Сохраняем состояние
         try:
             prompt = self.prompt_box.get("1.0", "end").strip()
         except:
@@ -1145,12 +1133,17 @@ class App(ctk.CTk):
             user = self.user_entry.get()
         except:
             user = ""
-        # Уничтожаем всё
+        try:
+            info = self.result_text.cget("text")
+        except:
+            info = tr("empty_result")
+        try:
+            meta = self.meta_text.cget("text")
+        except:
+            meta = "BPM: -- | Key: -- | Duration: -- | RMS: --"
         for w in self.winfo_children():
             w.destroy()
-        # Перестраиваем
         self._build_ui()
-        # Восстанавливаем состояние
         try:
             self.prompt_box.delete("1.0", "end")
             self.prompt_box.insert("1.0", prompt)
@@ -1164,6 +1157,15 @@ class App(ctk.CTk):
             self._update_guidance_label(guid)
             self._toggle_seed()
             self.counter_label.configure(text=f"{self.track_count} {tr('tracks')}")
+            if self.model_loaded:
+                self.set_status(tr("model_ready"))
+                self.status_label.configure(text_color=T["success"])
+                self.progress_bar.set(1.0)
+            else:
+                self.set_status(tr("model_loading"))
+                self.status_label.configure(text_color=T["warning"])
+            self.result_text.configure(text=info, text_color=T["text_primary"])
+            self.meta_text.configure(text=meta, text_color=T["text_primary"])
             if self.current_audio is not None:
                 self._draw_waveform(self.current_audio)
                 self.play_btn.configure(state="normal")
@@ -1225,7 +1227,7 @@ class App(ctk.CTk):
         self._pulse_state = not self._pulse_state
         color = T["accent"] if self._pulse_state else T["warning"]
         current = self.status_label.cget("text")
-        if "Init" in current or "Load" in current:
+        if "Init" in current or "Load" in current or "Загрузка" in current or "Инициализация" in current:
             self.status_label.configure(text_color=color)
         self.after(700, self._pulse_status)
 
@@ -1337,29 +1339,32 @@ class App(ctk.CTk):
             return
         self._save_undo_state()
         try:
+            # ФИКС 1: убираем лишние размерности
+            audio = np.squeeze(self.current_audio)
             if effect == "reverb":
-                self.current_audio = MusicLicenseGenerator.apply_reverb(self.current_audio)
+                audio = MusicLicenseGenerator.apply_reverb(audio)
             elif effect == "delay":
-                self.current_audio = MusicLicenseGenerator.apply_delay(self.current_audio)
+                audio = MusicLicenseGenerator.apply_delay(audio)
             elif effect == "pitch_up":
-                self.current_audio = MusicLicenseGenerator.apply_pitch_shift(self.current_audio, 2)
+                audio = MusicLicenseGenerator.apply_pitch_shift(audio, 2)
             elif effect == "pitch_down":
-                self.current_audio = MusicLicenseGenerator.apply_pitch_shift(self.current_audio, -2)
+                audio = MusicLicenseGenerator.apply_pitch_shift(audio, -2)
             elif effect == "speed_up":
-                self.current_audio = MusicLicenseGenerator.apply_speed_change(self.current_audio, 1.2)
+                audio = MusicLicenseGenerator.apply_speed_change(audio, 1.2)
             elif effect == "reverse":
-                self.current_audio = MusicLicenseGenerator.apply_reverse(self.current_audio)
+                audio = MusicLicenseGenerator.apply_reverse(audio)
             elif effect == "bass":
-                self.current_audio = MusicLicenseGenerator.apply_bass_boost(self.current_audio)
+                audio = MusicLicenseGenerator.apply_bass_boost(audio)
             elif effect == "normalize":
-                self.current_audio = MusicLicenseGenerator.apply_normalize(self.current_audio)
+                audio = MusicLicenseGenerator.apply_normalize(audio)
             elif effect == "master":
-                self.current_audio = MusicLicenseGenerator.apply_auto_master(self.current_audio)
+                audio = MusicLicenseGenerator.apply_auto_master(audio)
             elif effect == "harmonizer":
-                self.current_audio = MusicLicenseGenerator.apply_harmonizer(self.current_audio)
+                audio = MusicLicenseGenerator.apply_harmonizer(audio)
             elif effect == "gate":
-                self.current_audio = MusicLicenseGenerator.apply_spectral_gate(self.current_audio)
-            self._draw_waveform(self.current_audio)
+                audio = MusicLicenseGenerator.apply_spectral_gate(audio)
+            self.current_audio = audio
+            self._draw_waveform(audio)
             self.set_status(f"{tr('applied')}: {effect}")
         except Exception as e:
             err_msg = str(e)
@@ -1370,7 +1375,7 @@ class App(ctk.CTk):
             self.set_status(tr("generate_first"))
             return
         self._save_undo_state()
-        stems = MusicLicenseGenerator.separate_stems_simple(self.current_audio)
+        stems = MusicLicenseGenerator.separate_stems_simple(np.squeeze(self.current_audio))
         for name, stem in stems.items():
             filename = f"stem_{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
             sf.write(filename, stem, SAMPLE_RATE)
@@ -1385,10 +1390,10 @@ class App(ctk.CTk):
             self.is_playing = False
         self.is_playing = True
         def play_alternating():
-            sd.play(self.original_audio, SAMPLE_RATE)
+            sd.play(np.squeeze(self.original_audio), SAMPLE_RATE)
             import time
             time.sleep(len(self.original_audio) / SAMPLE_RATE)
-            sd.play(self.current_audio, SAMPLE_RATE)
+            sd.play(np.squeeze(self.current_audio), SAMPLE_RATE)
             time.sleep(len(self.current_audio) / SAMPLE_RATE)
             self.is_playing = False
             self.after(0, lambda: self.play_btn.configure(text=tr("play")))
@@ -1596,6 +1601,13 @@ class App(ctk.CTk):
         self.set_status("Favorite toggled")
 
     def _draw_waveform(self, audio):
+        # ФИКС 1: убираем лишние размерности
+        audio = np.squeeze(audio)
+        # ФИКС 2: надёжно прячем placeholder
+        try:
+            self.wave_placeholder.pack_forget()
+        except:
+            pass
         for w in list(self.wave_card.winfo_children()):
             if w == self.wave_placeholder:
                 continue
@@ -1622,7 +1634,7 @@ class App(ctk.CTk):
             self.is_playing = False
             self.play_btn.configure(text=tr("play"))
         else:
-            sd.play(self.current_audio, SAMPLE_RATE)
+            sd.play(np.squeeze(self.current_audio), SAMPLE_RATE)
             self.is_playing = True
             self.play_btn.configure(text=tr("stop"))
 
