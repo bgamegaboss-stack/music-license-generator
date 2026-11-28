@@ -12,3 +12,5 @@ pydub
 librosa
 pyperclip
 pretty_midi
+qrcode
+Pillow
