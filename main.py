@@ -1342,13 +1342,13 @@ class App(ctk.CTk):
             best_audio = None
             best_score = -1
             for i in range(batch_count):
-                self.status(f"Generating variant {i+1}/{batch_count}...")
+                self.set_status(f"Generating variant {i+1}/{batch_count}...")
                 audio = self.generator.generate(prompt, duration, seed + i if seed else None, temperature, guidance_scale, loop_mode)
                 score = np.std(audio)
                 if score > best_score:
                     best_score = score
                     best_audio = audio
-                self.progress(int((i + 1) / batch_count * 90))
+                self.set_progress(int((i + 1) / batch_count * 90))
             self.original_audio = best_audio.copy()
             self.current_audio = best_audio
             self._save_undo_state()
@@ -1396,7 +1396,6 @@ class App(ctk.CTk):
                 self._draw_waveform(best_audio)
             self.after(0, done)
         except Exception as e:
-            # ВАЖНО: сохраняем ошибку ДО вложенной функции (Python 3.12 fix)
             error_msg = str(e)
             error_trace = traceback.format_exc()
             def err():
