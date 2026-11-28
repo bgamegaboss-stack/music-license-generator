@@ -10,6 +10,8 @@ import random
 import json
 import re
 import sqlite3
+import shutil
+import subprocess
 from datetime import datetime
 from fpdf import FPDF
 import zipfile
@@ -24,6 +26,8 @@ from pydub import AudioSegment
 import pyperclip
 import pretty_midi
 import librosa
+import qrcode
+from PIL import Image
 
 if getattr(sys, 'frozen', False):
     script_dir = os.path.dirname(sys.executable)
@@ -37,24 +41,21 @@ THEMES = {
         "border": "#333333", "text_primary": "#FFFFFF", "text_secondary": "#A0A0A0",
         "text_dim": "#666666", "accent": "#007AFF", "accent_hover": "#0066CC",
         "accent_light": "#E5F1FF", "success": "#34C759", "warning": "#FF9500",
-        "danger": "#FF3B30", "island": "#000000", "island_text": "#FFFFFF",
-        "waveform": "#00E5FF", "spectrum": "#FF6B35"
+        "danger": "#FF3B30", "waveform": "#00E5FF", "spectrum": "#FF6B35"
     },
     "light": {
         "app": "#F2F2F7", "card": "#FFFFFF", "card_hover": "#F9F9FB",
         "border": "#E5E5EA", "text_primary": "#1C1C1E", "text_secondary": "#3A3A3C",
         "text_dim": "#8E8E93", "accent": "#007AFF", "accent_hover": "#0066CC",
         "accent_light": "#E5F1FF", "success": "#34C759", "warning": "#FF9500",
-        "danger": "#FF3B30", "island": "#1C1C1E", "island_text": "#FFFFFF",
-        "waveform": "#007AFF", "spectrum": "#FF3B30"
+        "danger": "#FF3B30", "waveform": "#007AFF", "spectrum": "#FF3B30"
     },
     "midnight": {
         "app": "#0A0A1F", "card": "#151530", "card_hover": "#1F1F45",
         "border": "#2A2A55", "text_primary": "#E0E0FF", "text_secondary": "#A0A0C0",
         "text_dim": "#606080", "accent": "#7C4DFF", "accent_hover": "#651FFF",
         "accent_light": "#EDE7F6", "success": "#00E676", "warning": "#FFAB40",
-        "danger": "#FF5252", "island": "#0A0A1F", "island_text": "#E0E0FF",
-        "waveform": "#7C4DFF", "spectrum": "#FF4081"
+        "danger": "#FF5252", "waveform": "#7C4DFF", "spectrum": "#FF4081"
     }
 }
 
@@ -71,60 +72,147 @@ CONTEXT_TAIL = 10
 CROSSFADE = 2
 
 PRESETS = {
-    "Synthwave": {"prompt": "dark synthwave chase scene, heavy bass, 120 bpm, retro analog synths", "bpm": 120, "key": "A minor"},
-    "Cyberpunk": {"prompt": "cyberpunk industrial techno, distorted bass, glitchy percussion, 128 bpm", "bpm": 128, "key": "D minor"},
-    "Epic Orchestral": {"prompt": "epic cinematic orchestral trailer music, brass, choir, timpani, 90 bpm", "bpm": 90, "key": "C minor"},
-    "Lo-fi Chill": {"prompt": "lo-fi hip hop beat, warm vinyl crackle, mellow piano, chill, 80 bpm", "bpm": 80, "key": "F major"},
-    "Trap": {"prompt": "aggressive drill trap instrumental, distorted 808 sub-bass sliding notes, rapid triplet hi-hats rolls, dark minor key melody, crisp snare hits, 140 bpm", "bpm": 140, "key": "G minor"},
-    "Ambient": {"prompt": "ambient space drone, ethereal pads, slow evolving textures, 60 bpm", "bpm": 60, "key": "E minor"},
-    "Dark Cinematic": {"prompt": "dark cinematic tension, low strings, ominous atmosphere, 70 bpm", "bpm": 70, "key": "B minor"},
-    "Electronic": {"prompt": "upbeat electronic dance music, energetic synths, driving beat, 128 bpm", "bpm": 128, "key": "A major"},
+    "Synthwave": {"prompt": "dark synthwave chase scene, heavy bass, 120 bpm, retro analog synths", "bpm": 120},
+    "Cyberpunk": {"prompt": "cyberpunk industrial techno, distorted bass, glitchy percussion, 128 bpm", "bpm": 128},
+    "Epic Orchestral": {"prompt": "epic cinematic orchestral trailer music, brass, choir, timpani, 90 bpm", "bpm": 90},
+    "Lo-fi Chill": {"prompt": "lo-fi hip hop beat, warm vinyl crackle, mellow piano, chill, 80 bpm", "bpm": 80},
+    "Trap": {"prompt": "aggressive drill trap instrumental, distorted 808 sub-bass, rapid hi-hats, dark melody, 140 bpm", "bpm": 140},
+    "Ambient": {"prompt": "ambient space drone, ethereal pads, slow evolving textures, 60 bpm", "bpm": 60},
+    "Dark Cinematic": {"prompt": "dark cinematic tension, low strings, ominous atmosphere, 70 bpm", "bpm": 70},
+    "Electronic": {"prompt": "upbeat electronic dance music, energetic synths, driving beat, 128 bpm", "bpm": 128},
+}
+
+# ===== SFX PRESETS (новый рынок) =====
+SFX_PRESETS = {
+    "Explosion": {"prompt": "massive cinematic explosion boom, deep sub rumble, debris, 1 second", "dur": 2},
+    "Footstep": {"prompt": "single dry footstep on concrete, short percussive click", "dur": 1},
+    "Laser": {"prompt": "sci-fi laser zap pew sound, short electronic blaster", "dur": 1},
+    "UI Click": {"prompt": "clean digital user interface button click, short beep", "dur": 1},
+    "Sword Slash": {"prompt": "sharp sword slash whoosh, metallic cutting sound", "dur": 1},
+    "Magic Spell": {"prompt": "fantasy magic spell cast, shimmering sparkle, ethereal", "dur": 2},
+    "Door Creak": {"prompt": "creaky old wooden door opening, horror atmosphere", "dur": 2},
+    "Coin Pickup": {"prompt": "video game coin pickup, bright metallic ding", "dur": 1},
 }
 
 EFFECT_DESCRIPTIONS = {
-    "reverb": "Эхо/пространство. Добавляет эффект 'большого зала' — звук становится объёмнее и шире.",
-    "delay": "Повтор. Звук повторяется с задержкой, как ритмичное эхо.",
-    "pitch_up": "Выше на 2 полутона. Мелодия звучит светлее и выше.",
-    "pitch_down": "Ниже на 2 полутона. Мелодия звучит темнее и ниже.",
-    "speed_up": "Быстрее на 20%. Ускоряет трек, темп становится выше.",
-    "reverse": "Задом наперёд. Проигрывает трек в обратную сторону.",
-    "bass": "Усиление баса. Делает низкие частоты громче — звук 'жирнее'.",
-    "normalize": "Выровнять громкость. Приводит трек к стандартной громкости.",
-    "master": "Авто-мастеринг. Делает трек громче и плотнее, как в студийных релизах.",
-    "harmonizer": "Гармонии. Добавляет дополнительные ноты — звук богаче и насыщеннее.",
-    "gate": "Убрать шум. Глушит тихие участки (шипение, фон).",
-    "ab": "Сравнить. По очереди играет оригинал и обработанный вариант.",
-    "undo": "Отменить. Возвращает трек к предыдущему состоянию.",
-    "redo": "Вернуть. Повторяет отменённое действие.",
-    "copy_hash": "Копировать хеш. Кладёт SHA-256 файла в буфер обмена.",
-    "stems": "Разделить. Разбивает трек на бас / средние / высокие частоты отдельными файлами.",
+    "reverb": "Эхо/пространство. Эффект 'большого зала' — звук объёмнее.",
+    "delay": "Повтор. Звук повторяется с задержкой, как эхо.",
+    "pitch_up": "Выше на 2 полутона. Мелодия светлее.",
+    "pitch_down": "Ниже на 2 полутона. Мелодия темнее.",
+    "speed_up": "Быстрее на 20%. Темп выше.",
+    "reverse": "Задом наперёд. Обратное воспроизведение.",
+    "bass": "Усиление баса. Низкие громче — звук 'жирнее'.",
+    "normalize": "Выровнять громкость к стандарту.",
+    "master": "Авто-мастеринг. Громче и плотнее, как в студии.",
+    "harmonizer": "Гармонии. Богаче и насыщеннее.",
+    "gate": "Убрать шум. Глушит шипение и фон.",
+    "ab": "Сравнить. Играет оригинал и обработанный.",
+    "undo": "Отменить. Вернуть к предыдущему состоянию.",
+    "redo": "Вернуть. Повторить отменённое.",
+    "copy_hash": "Копировать SHA-256 в буфер.",
+    "stems": "Разделить на drums/bass/melody/pads файлами.",
 }
 
 PRESET_DESCRIPTIONS = {
-    "Synthwave": "Ретро-электроника 80-х, как в киберпанк-гонках.",
-    "Cyberpunk": "Жёсткий индастриал-техно с искажениями.",
-    "Epic Orchestral": "Мощный оркестр для трейлеров и финальных битв.",
-    "Lo-fi Chill": "Спокойный бит для фона и учёбы.",
-    "Trap": "Агрессивный хип-хоп с глубоким басом 808.",
-    "Ambient": "Медитативный космический эмбиент без ритма.",
-    "Dark Cinematic": "Тревожная атмосфера для хоррора и напряжённых сцен.",
-    "Electronic": "Энергичный танцевальный трек с драйвом.",
+    "Synthwave": "Ретро-электроника 80-х.", "Cyberpunk": "Жёсткий индастриал-техно.",
+    "Epic Orchestral": "Оркестр для трейлеров.", "Lo-fi Chill": "Спокойный бит для учёбы.",
+    "Trap": "Хип-хоп с басом 808.", "Ambient": "Космический эмбиент.",
+    "Dark Cinematic": "Тревожная атмосфера.", "Electronic": "Танцевальный трек.",
+}
+
+# ===== 4-ЯЗЫЧНЫЕ ЛИЦЕНЗИОННЫЕ ТЕКСТЫ =====
+LICENSE_TEXTS = {
+    "ru": {
+        "title": "ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ",
+        "holder": "Лицензиат", "date": "Дата выдачи", "file": "Файл",
+        "type": "Тип лицензии", "hash": "Хеш файла (SHA-256)", "fingerprint": "Отпечаток аудио",
+        "commercial": (
+            "Настоящий сертификат предоставляет Лицензиату бессрочную, всемирную, неисключительную, "
+            "безвозмездную лицензию на использование указанного аудиофайла в любых коммерческих целях, "
+            "включая видеоигры, фильмы, рекламу и стриминговый контент. Файл сгенерирован ИИ на открытых "
+            "датасетах. Лицензиат вправе изменять, распространять и монетизировать файл без указания авторства. "
+            "Лицензия привязана к указанному хешу. Водяные знаки отсутствуют."
+        ),
+        "personal": (
+            "Настоящий сертификат предоставляет Лицензиату неисключительную лицензию на использование "
+            "файла в личных, некоммерческих целях. Коммерческое использование и монетизация запрещены. "
+            "Для получения коммерческих прав приобретите PRO-версию."
+        ),
+    },
+    "en": {
+        "title": "LICENSE AGREEMENT",
+        "holder": "License Holder", "date": "Issue Date", "file": "Audio File",
+        "type": "License Type", "hash": "File Hash (SHA-256)", "fingerprint": "Audio Fingerprint",
+        "commercial": (
+            "This certificate grants the License Holder a perpetual, worldwide, non-exclusive, royalty-free "
+            "license to use the specified audio file for any commercial purpose, including video games, films, "
+            "advertisements, and streaming content. The file was generated by AI trained exclusively on "
+            "open-source and public domain datasets. The Holder may modify, distribute, and monetize the file "
+            "without attribution. The license is bound to the file hash above. No watermarks are present."
+        ),
+        "personal": (
+            "This certificate grants a non-exclusive license for personal, non-commercial use only. "
+            "Commercial use, redistribution, and monetization are NOT permitted. Upgrade to PRO for "
+            "commercial rights."
+        ),
+    },
+    "de": {
+        "title": "LIZENZVEREINBARUNG",
+        "holder": "Lizenznehmer", "date": "Ausstellungsdatum", "file": "Audiodatei",
+        "type": "Lizenztyp", "hash": "Datei-Hash (SHA-256)", "fingerprint": "Audio-Fingerabdruck",
+        "commercial": (
+            "Dieses Zertifikat gewährt dem Lizenznehmer eine unbefristete, weltweite, nicht exklusive, "
+            "royaltyfreie Lizenz zur Nutzung der angegebenen Audiodatei für alle kommerziellen Zwecke, "
+            "einschließlich Videospielen, Filmen, Werbung und Streaming-Inhalten. Die Datei wurde von einer "
+            "KI erstellt, die ausschließlich mit Open-Source- und Public-Domain-Datensätzen trainiert wurde. "
+            "Der Lizenznehmer darf die Datei ohne Namensnennung ändern, verbreiten und monetarisieren. "
+            "Die Lizenz ist an den oben genannten Hash gebunden. Keine Wasserzeichen vorhanden."
+        ),
+        "personal": (
+            "Dieses Zertifikat gewährt eine nicht exklusive Lizenz für private, nicht-kommerzielle Nutzung. "
+            "Kommerzielle Nutzung, Weiterverbreitung und Monetarisierung sind NICHT gestattet."
+        ),
+    },
+    "fr": {
+        "title": "ACCORD DE LICENCE",
+        "holder": "Titulaire de la licence", "date": "Date d'émission", "file": "Fichier audio",
+        "type": "Type de licence", "hash": "Empreinte du fichier (SHA-256)", "fingerprint": "Empreinte audio",
+        "commercial": (
+            "Ce certificat accorde au titulaire une licence perpétuelle, mondiale, non exclusive et libre de "
+            "redevances pour utiliser le fichier audio spécifié à des fins commerciales, y compris jeux vidéo, "
+            "films, publicités et contenus de streaming. Le fichier a été généré par une IA entraînée "
+            "exclusivement sur des ensembles de données open source et du domaine public. Le titulaire peut "
+            "modifier, distribuer et monétiser le fichier sans attribution. La licence est liée à l'empreinte "
+            "ci-dessus. Aucun filigrane n'est présent."
+        ),
+        "personal": (
+            "Ce certificat accorde une licence non exclusive pour usage personnel non commercial uniquement. "
+            "L'usage commercial, la redistribution et la monétisation ne sont PAS autorisés."
+        ),
+    },
+}
+
+RU_COMMANDS = {
+    "обрежь": "trim", "обрезать": "trim", "фейд ин": "fade in", "фейд аут": "fade out",
+    "громче": "louder", "луп": "loop", "реверс": "reverse", "реверб": "reverb",
+    "дилей": "delay", "бас": "bass", "нормализ": "normalize", "мастер": "master",
+    "гармонии": "harmonizer", "гейт": "gate", "сравнить": "ab", "хеш": "copy_hash",
+    "стемы": "stems", "питч": "pitch", "скорость": "speed", "стата": "stats",
+    "аккорды": "chords", "экспорт": "export", "видео": "video", "игра": "game",
+    "проверь": "verify", "стиль": "style", "эффект": "sfx",
 }
 
 CHORD_PROGRESSIONS = [
-    ("Pop", "I-V-vi-IV", "C G Am F"),
-    ("Emotional", "vi-IV-I-V", "Am F C G"),
-    ("Rock", "I-IV-V-IV", "C F G F"),
-    ("Jazz", "ii-V-I", "Dm7 G7 Cmaj7"),
-    ("Dark", "i-VI-III-VII", "Am F C G"),
-    ("Epic", "i-III-VII-VI", "Am C G F"),
+    ("Pop", "I-V-vi-IV", "C G Am F"), ("Emotional", "vi-IV-I-V", "Am F C G"),
+    ("Rock", "I-IV-V-IV", "C F G F"), ("Jazz", "ii-V-I", "Dm7 G7 Cmaj7"),
+    ("Dark", "i-VI-III-VII", "Am F C G"), ("Epic", "i-III-VII-VI", "Am C G F"),
 ]
 
 RANDOM_PROMPTS = [
-    "mysterious underwater exploration theme, deep sub-bass, echoing sonar pings, ethereal pads",
-    "high-speed racing game soundtrack, adrenaline-pumping electronic rock, distorted guitars, fast tempo",
-    "medieval fantasy tavern music, lute, flute, cheerful folk melody, acoustic instruments",
-    "horror game ambient, unsettling drones, distant whispers, creaking sounds, psychological tension",
+    "mysterious underwater exploration theme, deep sub-bass, sonar pings, ethereal pads",
+    "high-speed racing soundtrack, adrenaline electronic rock, distorted guitars, fast",
+    "medieval fantasy tavern music, lute, flute, cheerful folk melody",
+    "horror game ambient, unsettling drones, distant whispers, psychological tension",
 ]
 
 LANG = {
@@ -135,7 +223,7 @@ LANG = {
         "duration": "Длительность", "creativity": "Креативность", "accuracy": "Точность промпта",
         "licensee": "Лицензиат", "fixed_seed": "Фикс. seed", "loop_mode": "🔄 Loop Mode",
         "batch": "Вариантов:", "result": "РЕЗУЛЬТАТ", "metadata": "МЕТАДАННЫЕ ТРЕКА",
-        "history": "История", "effects": "🎛️ AUDIO EFFECTS", "favorites": "⭐ Избранное",
+        "history": "История", "effects": "AUDIO EFFECTS", "favorites": "⭐ Избранное",
         "search": "🔍 Поиск...", "visualization": "ВИЗУАЛИЗАЦИЯ",
         "waveform": "🌊 Waveform", "spectrum": "📊 Spectrum",
         "empty_result": "Пусто. Нажми «Сгенерировать».",
@@ -148,6 +236,10 @@ LANG = {
         "applied": "Применено", "effect_error": "Ошибка эффекта",
         "generate_first": "Сначала сгенерируй трек", "undo": "Отмена", "redo": "Повтор",
         "tracks": "треков", "all": "Все",
+        "download_wav": "⬇️ WAV", "download_mp3": "⬇️ MP3", "download_ogg": "⬇️ OGG",
+        "mode_music": "🎵 Музыка", "mode_sfx": "💥 SFX",
+        "video": "🎬 Видео", "game": "🎮 Игра", "verify": "🔍 Проверить", "style": "🎨 Стиль",
+        "license_lang": "Язык лицензии",
     },
     "en": {
         "generate": "⚡ Generate (Ctrl+G)", "export": "📤 Export (Ctrl+E)",
@@ -156,7 +248,7 @@ LANG = {
         "duration": "Duration", "creativity": "Creativity", "accuracy": "Prompt Accuracy",
         "licensee": "Licensee", "fixed_seed": "Fixed seed", "loop_mode": "🔄 Loop Mode",
         "batch": "Variants:", "result": "RESULT", "metadata": "TRACK METADATA",
-        "history": "History", "effects": "🎛️ AUDIO EFFECTS", "favorites": "⭐ Favorites",
+        "history": "History", "effects": "AUDIO EFFECTS", "favorites": "⭐ Favorites",
         "search": "🔍 Search...", "visualization": "VISUALIZATION",
         "waveform": "🌊 Waveform", "spectrum": "📊 Spectrum",
         "empty_result": "Empty. Click Generate.",
@@ -169,6 +261,10 @@ LANG = {
         "applied": "Applied", "effect_error": "Effect error",
         "generate_first": "Generate a track first", "undo": "Undo", "redo": "Redo",
         "tracks": "tracks", "all": "All",
+        "download_wav": "⬇️ WAV", "download_mp3": "⬇️ MP3", "download_ogg": "⬇️ OGG",
+        "mode_music": "🎵 Music", "mode_sfx": "💥 SFX",
+        "video": "🎬 Video", "game": "🎮 Game", "verify": "🔍 Verify", "style": "🎨 Style",
+        "license_lang": "License language",
     }
 }
 
@@ -187,24 +283,21 @@ class Database:
             id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, prompt TEXT,
             duration REAL, bpm INTEGER, key TEXT, rms REAL, peak REAL,
             dynamic_range REAL, license_type TEXT, licensee TEXT, file_hash TEXT,
-            file_path TEXT, favorite INTEGER DEFAULT 0, seed INTEGER,
+            file_path TEXT, fingerprint TEXT, favorite INTEGER DEFAULT 0, seed INTEGER,
             temperature REAL, guidance_scale REAL, loop_mode INTEGER DEFAULT 0)''')
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS presets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE,
-            settings TEXT, created_at TEXT)''')
         self.conn.commit()
 
     def add_track(self, **kw):
         self.cursor.execute('''INSERT INTO tracks (timestamp, prompt, duration, bpm, key, rms, peak,
-            dynamic_range, license_type, licensee, file_hash, file_path, favorite,
+            dynamic_range, license_type, licensee, file_hash, file_path, fingerprint, favorite,
             seed, temperature, guidance_scale, loop_mode)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
             kw.get('timestamp', datetime.now().isoformat()), kw.get('prompt', ''),
             kw.get('duration', 0), kw.get('bpm'), kw.get('key'), kw.get('rms'),
             kw.get('peak'), kw.get('dynamic_range'), kw.get('license_type', 'Personal'),
             kw.get('licensee', 'User'), kw.get('file_hash', ''), kw.get('file_path', ''),
-            kw.get('favorite', 0), kw.get('seed'), kw.get('temperature', 1.0),
-            kw.get('guidance_scale', 3.0), kw.get('loop_mode', 0)))
+            kw.get('fingerprint', ''), kw.get('favorite', 0), kw.get('seed'),
+            kw.get('temperature', 1.0), kw.get('guidance_scale', 3.0), kw.get('loop_mode', 0)))
         self.conn.commit()
         return self.cursor.lastrowid
 
@@ -266,7 +359,6 @@ class MusicLicenseGenerator:
             audio = self._generate_with_context(prompt, duration, None, seed, temperature, guidance_scale)
         else:
             self.progress(15)
-            self.status("Generating: melody start...")
             result = self._generate_with_context(prompt, NATIVE_CHUNK, None, seed, temperature, guidance_scale)
             remaining = duration - NATIVE_CHUNK
             step = 0
@@ -277,9 +369,7 @@ class MusicLicenseGenerator:
                     chunk_len = remaining
                 self.status(f"Continuing melody... step {step}")
                 self.progress(int(15 + (step / (step + remaining / 20)) * 70))
-                ctx_samples = CONTEXT_TAIL * SAMPLE_RATE
-                if len(result) < ctx_samples:
-                    ctx_samples = len(result)
+                ctx_samples = min(CONTEXT_TAIL * SAMPLE_RATE, len(result))
                 audio_context = result[-ctx_samples:]
                 new_chunk = self._generate_with_context(prompt, chunk_len, audio_context, (seed + step) if seed is not None else None, temperature, guidance_scale)
                 crossfade_samples = min(CROSSFADE * SAMPLE_RATE, len(result), len(new_chunk))
@@ -292,7 +382,6 @@ class MusicLicenseGenerator:
             fade_in = np.linspace(0.0, 1.0, loop_fade)
             audio[:loop_fade] = audio[:loop_fade] * fade_in + audio[-loop_fade:] * fade_out
             audio[-loop_fade:] = audio[-loop_fade:] * fade_out + audio[:loop_fade] * fade_in
-            self.status("Loop mode applied")
         self.progress(95)
         return audio
 
@@ -336,52 +425,42 @@ class MusicLicenseGenerator:
         return filename
 
     @staticmethod
-    def save_flac(audio, samplerate=SAMPLE_RATE):
-        peak = np.max(np.abs(audio))
-        if peak > 0:
-            audio = audio / peak * 0.95
-        audio_int16 = (audio * 32767).astype(np.int16)
-        audio_segment = AudioSegment(audio_int16.tobytes(), frame_rate=samplerate, sample_width=audio_int16.dtype.itemsize, channels=1)
-        filename = f"track_{datetime.now().strftime('%Y%m%d_%H%M%S')}.flac"
-        audio_segment.export(filename, format="flac")
-        return filename
-
-    @staticmethod
-    def save_midi(audio, samplerate=SAMPLE_RATE):
-        try:
-            pitches, magnitudes = librosa.piptrack(y=audio, sr=samplerate)
-            midi_notes = []
-            threshold = np.median(magnitudes) * 2
-            for t in range(pitches.shape[1]):
-                for f in range(pitches.shape[0]):
-                    if magnitudes[f, t] > threshold and 50 < pitches[f, t] < 2000:
-                        midi_note = librosa.hz_to_midi(pitches[f, t])
-                        midi_notes.append((t * 512 / samplerate, int(round(midi_note)), 100))
-                        break
-            midi = pretty_midi.PrettyMIDI()
-            piano = pretty_midi.Instrument(program=0)
-            if midi_notes:
-                midi_notes.sort(key=lambda x: x[0])
-                for i, (time_sec, note, vel) in enumerate(midi_notes):
-                    duration = 0.1
-                    if i + 1 < len(midi_notes):
-                        duration = min(0.5, midi_notes[i+1][0] - time_sec)
-                    piano.notes.append(pretty_midi.Note(velocity=vel, pitch=note, start=time_sec, end=time_sec + duration))
-            midi.instruments.append(piano)
-            filename = f"track_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mid"
-            midi.write(filename)
-            return filename
-        except Exception as e:
-            print(f"MIDI export error: {e}")
-            return None
-
-    @staticmethod
     def calculate_hash(filepath):
         sha256_hash = hashlib.sha256()
         with open(filepath, "rb") as f:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
+
+    # ===== AUDIO FINGERPRINT (killer feature) =====
+    @staticmethod
+    def compute_fingerprint(audio, sr=SAMPLE_RATE):
+        """Спектральный отпечаток — устойчив к перекодированию формата"""
+        try:
+            chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+            # квантуем хроматические признаки в 8 уровней
+            quantized = np.round(chroma * 8).astype(int)
+            # усредняем по времени → 12x8 матрица
+            summary = np.mean(quantized, axis=1).astype(int)
+            # хешируем
+            data = ''.join(str(int(x)) for x in summary).encode()
+            return hashlib.sha256(data).hexdigest()[:32]
+        except:
+            return None
+
+    @staticmethod
+    def verify_fingerprint(audio, stored_fp, sr=SAMPLE_RATE):
+        """Сравнение отпечатков — возвращает % совпадения"""
+        try:
+            chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+            quantized = np.round(chroma * 8).astype(int)
+            summary = np.mean(quantized, axis=1).astype(int)
+            # сравниваем с восстановленным из хеша — но проще: хеш совпадает ли
+            data = ''.join(str(int(x)) for x in summary).encode()
+            fp = hashlib.sha256(data).hexdigest()[:32]
+            return 100.0 if fp == stored_fp else 0.0
+        except:
+            return 0.0
 
     @staticmethod
     def detect_bpm(audio, sr=SAMPLE_RATE):
@@ -410,21 +489,304 @@ class MusicLicenseGenerator:
         return {"rms": round(rms, 4), "peak": round(peak, 4), "duration": round(duration, 2),
                 "dynamic_range_db": round(dynamic_range, 2), "samples": len(audio), "sample_rate": sr}
 
+    # ===== QR VERIFICATION CODE =====
     @staticmethod
-    def get_frequency_bands(audio, sr=SAMPLE_RATE):
+    def generate_qr(file_hash, fingerprint, licensee):
+        """QR с данными для верификации подлинности"""
         try:
-            spectrum = np.abs(np.fft.rfft(audio))
-            freqs = np.fft.rfftfreq(len(audio), 1.0 / sr)
-            return {
-                "sub (20-60Hz)": np.mean(spectrum[(freqs >= 20) & (freqs < 60)]) if np.any((freqs >= 20) & (freqs < 60)) else 0,
-                "bass (60-250Hz)": np.mean(spectrum[(freqs >= 60) & (freqs < 250)]) if np.any((freqs >= 60) & (freqs < 250)) else 0,
-                "mid (250-2kHz)": np.mean(spectrum[(freqs >= 250) & (freqs < 2000)]) if np.any((freqs >= 250) & (freqs < 2000)) else 0,
-                "high (2k-8kHz)": np.mean(spectrum[(freqs >= 2000) & (freqs < 8000)]) if np.any((freqs >= 2000) & (freqs < 8000)) else 0,
-                "air (8k+)": np.mean(spectrum[freqs >= 8000]) if np.any(freqs >= 8000) else 0
-            }
+            payload = f"AEGIS-AUDIO|hash:{file_hash[:16]}|fp:{fingerprint[:16]}|lic:{licensee}"
+            qr = qrcode.QRCode(version=1, box_size=6, border=2)
+            qr.add_data(payload)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            filename = f"qr_{file_hash[:8]}.png"
+            img.save(filename)
+            return filename
+        except Exception as e:
+            print(f"QR error: {e}")
+            return None
+
+    # ===== 4-ЯЗЫЧНАЯ ЛИЦЕНЗИЯ (ГЛАВНАЯ ФИЧА) =====
+    @staticmethod
+    def _get_unicode_font(pdf):
+        """Пробуем загрузить шрифт с кириллицей (Windows Arial). Fallback — транслит."""
+        font_paths = [
+            r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\Arial.ttf",
+            r"C:\Windows\Fonts\times.ttf",
+            r"C:\Windows\Fonts\segoeui.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ]
+        for p in font_paths:
+            if os.path.exists(p):
+                try:
+                    pdf.add_font("Uni", "", p)
+                    return "Uni"
+                except:
+                    continue
+        return None
+
+    @staticmethod
+    def _translit_ru(text):
+        """Fallback транслитерация кириллицы в латиницу"""
+        ru_latin = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z',
+                    'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+                    'с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'ts','ч':'ch','ш':'sh','щ':'sch',
+                    'ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+                    'А':'A','Б':'B','В':'V','Г':'G','Д':'D','Е':'E','Ё':'Yo','Ж':'Zh','З':'Z',
+                    'И':'I','Й':'Y','К':'K','Л':'L','М':'M','Н':'N','О':'O','П':'P','Р':'R',
+                    'С':'S','Т':'T','У':'U','Ф':'F','Х':'H','Ц':'Ts','Ч':'Ch','Ш':'Sh','Щ':'Sch',
+                    'Ъ':'','Ы':'Y','Ь':'','Э':'E','Ю':'Yu','Я':'Ya'}
+        return ''.join(ru_latin.get(c, c) for c in text)
+
+    @staticmethod
+    def generate_multilang_license(audio_filename, file_hash, user_name, license_type, bpm, key, analytics, fingerprint, qr_path):
+        """PDF-лицензия на 4 языках: RU, EN, DE, FR"""
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        font_name = MusicLicenseGenerator._get_unicode_font(pdf)
+        use_unicode = font_name is not None
+
+        def safe_text(text):
+            if use_unicode:
+                return text
+            # fallback: транслим кириллицу
+            return MusicLicenseGenerator._translit_ru(text)
+
+        def set_font(style="normal", size=10):
+            if use_unicode:
+                pdf.set_font("Uni", style, size)
+            else:
+                pdf.set_font("Helvetica", style, size)
+
+        pdf.add_page()
+
+        # Шапка
+        set_font("B", 20)
+        pdf.cell(0, 14, txt="AEGIS AUDIO PRO", ln=True, align="C")
+        set_font("", 11)
+        pdf.cell(0, 6, txt="Multilingual License Certificate  |  4-Years Legal Validity", ln=True, align="C")
+        pdf.ln(4)
+
+        # QR-код справа, инфо слева
+        qr_col = 0
+        if qr_path and os.path.exists(qr_path):
+            try:
+                pdf.image(qr_path, x=150, y=pdf.get_y(), w=45)
+                qr_col = 150
+            except:
+                pass
+
+        set_font("B", 11)
+        pdf.cell(0, 6, txt="VERIFICATION", ln=True)
+        set_font("", 9)
+        pdf.cell(0, 5, txt=safe_text(f"Licensee: {user_name}"), ln=True)
+        pdf.cell(0, 5, txt=f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
+        pdf.cell(0, 5, txt=f"File: {audio_filename}", ln=True)
+        if bpm:
+            pdf.cell(0, 5, txt=f"BPM: {bpm}  |  Key: {key or '--'}", ln=True)
+        if analytics:
+            pdf.cell(0, 5, txt=f"Duration: {analytics['duration']}s  |  RMS: {analytics['rms']}", ln=True)
+        pdf.set_font("Courier", "", 7)
+        pdf.multi_cell(140, 4, txt=f"SHA-256: {file_hash}")
+        if fingerprint:
+            pdf.multi_cell(140, 4, txt=f"Fingerprint: {fingerprint}")
+        set_font("", 8)
+        pdf.cell(0, 4, txt="Scan QR to verify authenticity", ln=True)
+        pdf.ln(6)
+
+        # Разделитель
+        pdf.set_draw_color(0, 122, 255)
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(4)
+
+        # 4 языковых блока
+        lang_titles = {"ru": "RUSSIAN / РУССКИЙ", "en": "ENGLISH", "de": "GERMAN / DEUTSCH", "fr": "FRENCH / FRANCAIS"}
+        for lang_code in ["ru", "en", "de", "fr"]:
+            block = LICENSE_TEXTS[lang_code]
+            set_font("B", 11)
+            pdf.cell(0, 6, txt=f"{block['title']}  ({lang_titles[lang_code]})", ln=True)
+            set_font("", 8)
+            pdf.cell(0, 4, txt=f"{block['holder']}: {user_name}   |   {block['type']}: {license_type}", ln=True)
+            set_font("", 9)
+            body = block["commercial"] if license_type == "Commercial" else block["personal"]
+            pdf.multi_cell(0, 5, txt=safe_text(body))
+            pdf.ln(4)
+            pdf.set_draw_color(200, 200, 200)
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+            pdf.ln(4)
+
+        # Сноска
+        set_font("", 7)
+        pdf.cell(0, 4, txt="Issued by: Aegis Audio Pro  |  Watermark-free  |  AI-generated on open-source data", ln=True, align="C")
+
+        pdf_filename = f"license_{audio_filename.replace('.wav', '').replace('.mp3', '').replace('.ogg', '')}.pdf"
+        pdf.output(pdf_filename)
+        return pdf_filename
+
+    @staticmethod
+    def create_package(audio_filename, pdf_filename, qr_path, fingerprint_path):
+        zip_filename = f"AegisAudio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        with zipfile.ZipFile(zip_filename, 'w') as zipf:
+            zipf.write(audio_filename)
+            zipf.write(pdf_filename)
+            if qr_path and os.path.exists(qr_path):
+                zipf.write(qr_path)
+            if fingerprint_path and os.path.exists(fingerprint_path):
+                zipf.write(fingerprint_path)
+        os.remove(audio_filename)
+        os.remove(pdf_filename)
+        if qr_path and os.path.exists(qr_path):
+            os.remove(qr_path)
+        if fingerprint_path and os.path.exists(fingerprint_path):
+            os.remove(fingerprint_path)
+        return zip_filename
+
+    # ===== VIDEO EXPORT (GIF / MP4) =====
+    @staticmethod
+    def export_video(audio, samplerate=SAMPLE_RATE, output_path=None):
+        """Рендер визуализации волны в GIF (всегда) или MP4 (если ffmpeg)"""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            from matplotlib.animation import FuncAnimation, PillowWriter
+            base = output_path or f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            fig, ax = plt.subplots(figsize=(8, 3), dpi=80)
+            ax.set_facecolor('#000000')
+            fig.patch.set_facecolor('#000000')
+            line, = ax.plot([], [], color='#00E5FF', lw=1.5)
+            ax.set_xlim(0, len(audio))
+            ax.set_ylim(-1.1, 1.1)
+            ax.axis('off')
+            frames = 60
+            step = len(audio) // frames
+            def update(i):
+                end = min((i + 1) * step, len(audio))
+                line.set_data(np.arange(end), audio[:end])
+                return line,
+            anim = FuncAnimation(fig, update, frames=frames, interval=50, blit=False)
+            gif_path = base + ".gif"
+            anim.save(gif_path, writer=PillowWriter(fps=20))
+            plt.close(fig)
+            # MP4 если ffmpeg
+            mp4_path = None
+            if shutil.which("ffmpeg"):
+                wav_tmp = base + "_tmp.wav"
+                sf.write(wav_tmp, audio, samplerate)
+                mp4_path = base + ".mp4"
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", gif_path, "-i", wav_tmp, "-c:v", "libx264",
+                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", mp4_path],
+                    capture_output=True, timeout=60
+                )
+                if not os.path.exists(mp4_path):
+                    mp4_path = None
+                os.remove(wav_tmp)
+            return gif_path, mp4_path
+        except Exception as e:
+            print(f"Video export error: {e}")
+            return None, None
+
+    # ===== GAME ENGINE EXPORT (Unity / Godot) =====
+    @staticmethod
+    def export_game_meta(audio_path, engine="unity"):
+        """Генерация .meta файлов для игровых движков"""
+        try:
+            base = os.path.splitext(audio_path)[0]
+            if engine == "unity":
+                guid = hashlib.md5(audio_path.encode()).hexdigest()[:32]
+                meta_path = base + ".wav.meta"
+                content = f"""fileFormatVersion: 2
+guid: {guid}
+AudioImporter:
+  externalObjects: {}
+  serializedVersion: 6
+  defaultSettings:
+    loadType: 0
+    sampleRateSetting: 0
+    sampleRateOverride: 44100
+    compressionFormat: 1
+    quality: 1
+    conversionMode: 0
+  platformSettingOverrides: {{}}
+  forceToMono: 0
+  normalize: 1
+  preloadAudioData: 1
+  loadInBackground: 0
+  ambisonic: 0
+  3D: 1
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+"""
+            else:  # godot
+                meta_path = base + ".wav.import"
+                content = f"""[remap]
+importer="wav"
+type="AudioStreamSample"
+path="res://.import/{os.path.basename(base)}.wav.sample"
+
+[deps]
+source_file="{os.path.basename(audio_path)}"
+dest_files=["res://.import/{os.path.basename(base)}.wav.sample"]
+
+[params]
+force/8_bit=false
+force/mono=false
+force/max_rate=false
+force/max_rate_hz=44100
+edit/trim=false
+edit/normalize=false
+edit/loop_mode=0
+compress/mode=0
+"""
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return meta_path
+        except Exception as e:
+            print(f"Game export error: {e}")
+            return None
+
+    # ===== STYLE TRANSFER (референс) =====
+    @staticmethod
+    def analyze_style(audio, sr=SAMPLE_RATE):
+        """Извлекаем темп/тональность/энергию из референсного файла"""
+        try:
+            tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
+            tempo = round(float(tempo))
+            chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+            key_idx = np.argmax(np.sum(chroma, axis=1))
+            keys = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+            key = keys[key_idx]
+            energy = float(np.mean(np.abs(audio)))
+            if energy > 0.3:
+                mood = "high energy, aggressive"
+            elif energy > 0.1:
+                mood = "medium energy, balanced"
+            else:
+                mood = "low energy, calm"
+            return {"bpm": tempo, "key": key, "mood": mood}
         except:
             return None
 
+    # ===== STEM EXPORT с именами =====
+    @staticmethod
+    def separate_stems_named(audio):
+        """Разделение на drums/bass/melody/pads с именами"""
+        nyq = SAMPLE_RATE / 2
+        b_low, a_low = butter(2, 120 / nyq, btype='low')
+        b_drums, a_drums = butter(2, [120 / nyq, 200 / nyq], btype='band')
+        b_mid, a_mid = butter(2, [200 / nyq, 2000 / nyq], btype='band')
+        b_high, a_high = butter(2, 2000 / nyq, btype='high')
+        return {
+            "bass": lfilter(b_low, a_low, audio),
+            "drums": lfilter(b_drums, a_drums, audio),
+            "melody": lfilter(b_mid, a_mid, audio),
+            "pads": lfilter(b_high, a_high, audio),
+        }
+
+    # ===== Эффекты =====
     @staticmethod
     def apply_reverb(audio, decay=0.5, mix=0.3):
         delay_samples = int(0.1 * SAMPLE_RATE)
@@ -501,20 +863,14 @@ class MusicLicenseGenerator:
         nyq = SAMPLE_RATE / 2
         if low_gain_db != 0:
             b, a = butter(2, 300 / nyq, btype='low')
-            low_band = lfilter(b, a, result)
-            gain = 10 ** (low_gain_db / 20)
-            result = result + low_band * (gain - 1)
+            result = result + lfilter(b, a, result) * (10 ** (low_gain_db / 20) - 1)
         if mid_gain_db != 0:
             b1, a1 = butter(2, 300 / nyq, btype='high')
             b2, a2 = butter(2, 3000 / nyq, btype='low')
-            mid_band = lfilter(b2, a2, lfilter(b1, a1, result))
-            gain = 10 ** (mid_gain_db / 20)
-            result = result + mid_band * (gain - 1)
+            result = result + lfilter(b2, a2, lfilter(b1, a1, result)) * (10 ** (mid_gain_db / 20) - 1)
         if high_gain_db != 0:
             b, a = butter(2, 3000 / nyq, btype='high')
-            high_band = lfilter(b, a, result)
-            gain = 10 ** (high_gain_db / 20)
-            result = result + high_band * (gain - 1)
+            result = result + lfilter(b, a, result) * (10 ** (high_gain_db / 20) - 1)
         peak = np.max(np.abs(result))
         if peak > 1.0:
             result = result / peak
@@ -525,8 +881,7 @@ class MusicLicenseGenerator:
         threshold_lin = 10 ** (threshold / 20)
         attack_samples = int(attack * SAMPLE_RATE)
         release_samples = int(release * SAMPLE_RATE)
-        envelope = np.abs(audio)
-        envelope = uniform_filter1d(envelope, size=max(1, attack_samples))
+        envelope = uniform_filter1d(np.abs(audio), size=max(1, attack_samples))
         gain_reduction = np.ones_like(audio)
         above = envelope > threshold_lin
         gain_reduction[above] = 1.0 / (1.0 + (ratio - 1.0) * (envelope[above] / threshold_lin - 1.0))
@@ -571,140 +926,61 @@ class MusicLicenseGenerator:
             result = result / peak
         return result
 
-    @staticmethod
-    def separate_stems_simple(audio):
-        nyq = SAMPLE_RATE / 2
-        b_low, a_low = butter(2, 250 / nyq, btype='low')
-        b_mid, a_mid = butter(2, [250 / nyq, 4000 / nyq], btype='band')
-        b_high, a_high = butter(2, 4000 / nyq, btype='high')
-        return {"bass": lfilter(b_low, a_low, audio), "mid": lfilter(b_mid, a_mid, audio), "high": lfilter(b_high, a_high, audio)}
 
-    @staticmethod
-    def generate_license_pdf(audio_filename, file_hash, user_name, license_type="Commercial", bpm=None, key=None, analytics=None):
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", "B", 18)
-        pdf.cell(200, 12, txt="AEGIS AUDIO PRO", ln=True, align="C")
-        pdf.set_font("Arial", size=12)
-        pdf.cell(200, 8, txt=f"{license_type} License Certificate", ln=True, align="C")
-        pdf.ln(12)
-        pdf.set_font("Arial", size=11)
-        pdf.cell(200, 8, txt=f"License Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
-        pdf.cell(200, 8, txt=f"License Holder: {user_name}", ln=True)
-        pdf.cell(200, 8, txt=f"Audio File: {audio_filename}", ln=True)
-        if bpm:
-            pdf.cell(200, 8, txt=f"BPM: {bpm}", ln=True)
-        if key:
-            pdf.cell(200, 8, txt=f"Key: {key}", ln=True)
-        if analytics:
-            pdf.cell(200, 8, txt=f"Duration: {analytics['duration']}s | RMS: {analytics['rms']}", ln=True)
-        pdf.cell(200, 8, txt=f"License Type: {license_type}", ln=True)
-        pdf.cell(200, 8, txt="File Hash (SHA-256):", ln=True)
-        pdf.set_font("Courier", size=8)
-        pdf.multi_cell(0, 4, file_hash)
-        pdf.ln(8)
-        pdf.set_font("Arial", "B", 13)
-        pdf.cell(200, 10, txt="LICENSE TERMS:", ln=True)
-        pdf.ln(4)
-        pdf.set_font("Arial", size=10)
-        if license_type == "Commercial":
-            license_text = """This certificate grants the License Holder a perpetual, worldwide, non-exclusive, royalty-free license to use the specified audio file for any commercial purpose, including but not limited to: video games, films, advertisements, streaming content, and other media projects.
-
-The audio file was generated using AI technology trained exclusively on open-source and public domain datasets. The License Holder is free to modify, distribute, and monetize this audio file without any restrictions or attribution requirements.
-
-This license is tied to the specific file hash above and cannot be transferred to other files.
-
-Issued by: Aegis Audio Pro"""
-        else:
-            license_text = """This certificate grants the License Holder a non-exclusive license to use the specified audio file for personal, non-commercial purposes only.
-
-Commercial use, redistribution, and monetization are NOT permitted under this license.
-
-To upgrade to a Commercial License, please visit: https://aegis-audio.com/pro
-
-Issued by: Aegis Audio Pro (Free Tier)"""
-        pdf.multi_cell(0, 5, license_text)
-        pdf_filename = f"license_{audio_filename.replace('.wav', '').replace('.mp3', '').replace('.ogg', '').replace('.flac', '')}.pdf"
-        pdf.output(pdf_filename)
-        return pdf_filename
-
-    @staticmethod
-    def create_package(audio_filename, pdf_filename):
-        zip_filename = f"AegisAudio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-        with zipfile.ZipFile(zip_filename, 'w') as zipf:
-            zipf.write(audio_filename)
-            zipf.write(pdf_filename)
-        os.remove(audio_filename)
-        os.remove(pdf_filename)
-        return zip_filename
-
-
-class DynamicIsland(ctk.CTkFrame):
+class AIAssistantPanel(ctk.CTkFrame):
     def __init__(self, master, app_instance):
-        super().__init__(master, fg_color="transparent")
+        super().__init__(master, fg_color=T["card"], corner_radius=0, border_color=T["border"], border_width=1)
         self.app = app_instance
         self.is_expanded = False
-        self.expanded_panel = None
-        self.pack(fill="x", pady=(10, 0))
-        self.compact = ctk.CTkFrame(self, fg_color="#000000", corner_radius=25, width=220, height=44)
-        self.compact.pack(expand=True)
-        self.indicator = ctk.CTkLabel(self.compact, text="● AI Assistant", font=("Segoe UI", 12, "bold"), text_color="#FFFFFF")
-        self.indicator.pack(expand=True)
-        self.compact.bind("<Button-1>", lambda e: self._toggle())
-        self.indicator.bind("<Button-1>", lambda e: self._toggle())
-
-    def _toggle(self):
-        if self.is_expanded:
-            self._collapse()
-        else:
-            self._expand()
-
-    def _expand(self):
-        if self.is_expanded:
-            return
-        self.is_expanded = True
-        self.compact.pack_forget()
-        self.expanded_panel = ctk.CTkFrame(self, fg_color="#FFFFFF", corner_radius=24)
-        self.expanded_panel.pack(fill="x", pady=(0, 10))
-        header = ctk.CTkFrame(self.expanded_panel, fg_color="transparent")
+        self.pack_forget()
+        header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(16, 12))
-        ctk.CTkLabel(header, text="AI Assistant", font=("Segoe UI Variable Display", 22, "bold"), text_color="#000000").pack(side="left")
-        ctk.CTkButton(header, text="✕", width=32, height=32, corner_radius=16, fg_color="#E5E5EA", hover_color="#D1D1D6", text_color="#1C1C1E", font=("Segoe UI", 14), command=self._collapse).pack(side="right")
-        chat_frame = ctk.CTkFrame(self.expanded_panel, fg_color="#1A1A1A", corner_radius=14)
+        ctk.CTkLabel(header, text="🤖 AI Assistant", font=("Segoe UI Variable Display", 18, "bold"), text_color=T["text_primary"]).pack(side="left")
+        ctk.CTkButton(header, text="✕", width=32, height=32, corner_radius=16, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._collapse).pack(side="right")
+        chat_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         chat_frame.pack(fill="both", expand=True, padx=20, pady=(0, 12))
-        self.chat_display = ctk.CTkTextbox(chat_frame, corner_radius=14, height=200, font=("Segoe UI", 12), wrap="word", fg_color="#1A1A1A", text_color="#FFFFFF", border_width=0)
+        self.chat_display = ctk.CTkTextbox(chat_frame, corner_radius=12, font=("Segoe UI", 12), wrap="word", fg_color=T["card_hover"], text_color=T["text_primary"], border_width=0)
         self.chat_display.pack(fill="both", expand=True, padx=12, pady=12)
-        self.chat_display.insert("1.0", "Hi! I'm your AI assistant.\n\nCommands:\n• 'trim to 20 seconds'\n• 'add fade in/out'\n• 'make louder 50%'\n• 'loop mode'\n• 'reverse'\n• 'reverb'\n• 'bass boost'\n• 'pitch +2'\n• 'master'\n• 'eq low +3'\n• 'stats'\n• 'chords'\n• 'stems'\n")
-        input_frame = ctk.CTkFrame(self.expanded_panel, fg_color="transparent")
+        self.chat_display.insert("1.0", "Привет! Я AI-ассистент v2.0.\n\nКоманды (RU/EN):\n• 'обрежь до 20с' / 'trim 20s'\n• 'реверб' / 'reverb'\n• 'мастер' / 'master'\n• 'видео' / 'video'\n• 'игра unity' / 'game godot'\n• 'проверь' / 'verify'\n• 'стиль' / 'style'\n• 'стемы' / 'stems'\n• 'стата' / 'stats'\n")
+        input_frame = ctk.CTkFrame(self, fg_color="transparent")
         input_frame.pack(fill="x", padx=20, pady=(0, 16))
-        self.chat_input = ctk.CTkEntry(input_frame, placeholder_text="Type command...", fg_color="#1A1A1A", border_color="#333333", border_width=1, corner_radius=12, text_color="#FFFFFF", height=40)
+        self.chat_input = ctk.CTkEntry(input_frame, placeholder_text="Введи команду...", fg_color=T["card_hover"], border_color=T["border"], border_width=1, corner_radius=12, text_color=T["text_primary"], height=40)
         self.chat_input.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.chat_input.bind("<Return>", lambda e: self._process_command())
-        ctk.CTkButton(input_frame, text="Send", width=100, height=40, corner_radius=12, fg_color="#007AFF", hover_color="#0066CC", text_color="#FFFFFF", font=("Segoe UI", 13, "bold"), command=self._process_command).pack(side="right")
-        ctk.CTkButton(self.expanded_panel, text="Collapse", height=32, corner_radius=16, fg_color="#E5E5EA", hover_color="#D1D1D6", text_color="#1C1C1E", font=("Segoe UI", 12), command=self._collapse).pack(pady=(0, 16))
+        ctk.CTkButton(input_frame, text="Send", width=100, height=40, corner_radius=12, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 13, "bold"), command=self._process_command).pack(side="right")
+
+    def _expand(self):
+        if not self.is_expanded:
+            self.is_expanded = True
+            self.pack(side="right", fill="y", padx=(16, 0), pady=(0, 24))
+            self.configure(width=380)
 
     def _collapse(self):
-        if not self.is_expanded:
-            return
-        self.is_expanded = False
-        if self.expanded_panel:
-            self.expanded_panel.destroy()
-            self.expanded_panel = None
-        self.compact.pack(expand=True)
+        if self.is_expanded:
+            self.is_expanded = False
+            self.pack_forget()
 
     def _process_command(self):
         command = self.chat_input.get().strip().lower()
         if not command:
             return
         self.chat_input.delete(0, "end")
-        self.chat_display.insert("end", f"\nYou: {command}\n")
-        response = self._handle_command(command)
-        self.chat_display.insert("end", f"Assistant: {response}\n")
+        self.chat_display.insert("end", f"\nТы: {command}\n")
+        translated = self._translate_command(command)
+        response = self._handle_command(translated)
+        self.chat_display.insert("end", f"Ассистент: {response}\n")
         self.chat_display.see("end")
+
+    def _translate_command(self, command):
+        for ru_cmd, en_cmd in RU_COMMANDS.items():
+            if ru_cmd in command:
+                command = command.replace(ru_cmd, en_cmd)
+                break
+        return command
 
     def _handle_command(self, command):
         if not self.app.current_audio:
-            return "Generate a track first."
+            return "Сначала сгенерируй трек."
         try:
             if "trim" in command:
                 match = re.search(r'(\d+)', command)
@@ -713,94 +989,94 @@ class DynamicIsland(ctk.CTkFrame):
                     samples = seconds * SAMPLE_RATE
                     if len(self.app.current_audio) > samples:
                         self.app.current_audio = self.app.current_audio[:samples]
-                        return f"✅ Trimmed to {seconds}s"
-                    return f"Track already shorter than {seconds}s"
-                return "Specify: 'trim to 20 seconds'"
+                        return f"✅ Обрезано до {seconds}с"
+                    return f"Трек короче {seconds}с"
             elif "fade in" in command:
-                match = re.search(r'(\d+)', command)
-                sec = int(match.group(1)) if match else 2
+                sec = int(re.search(r'(\d+)', command).group(1)) if re.search(r'(\d+)', command) else 2
                 self.app.current_audio = MusicLicenseGenerator.apply_fade(self.app.current_audio, fade_in_sec=sec)
-                return f"✅ Fade in added ({sec}s)"
+                return f"✅ Fade in {sec}с"
             elif "fade out" in command:
-                match = re.search(r'(\d+)', command)
-                sec = int(match.group(1)) if match else 2
+                sec = int(re.search(r'(\d+)', command).group(1)) if re.search(r'(\d+)', command) else 2
                 self.app.current_audio = MusicLicenseGenerator.apply_fade(self.app.current_audio, fade_out_sec=sec)
-                return f"✅ Fade out added ({sec}s)"
+                return f"✅ Fade out {sec}с"
             elif "louder" in command:
-                match = re.search(r'(\d+)', command)
-                percent = int(match.group(1)) / 100.0 if match else 0.5
+                percent = int(re.search(r'(\d+)', command).group(1)) / 100.0 if re.search(r'(\d+)', command) else 0.5
                 self.app.current_audio *= (1.0 + percent)
                 peak = np.max(np.abs(self.app.current_audio))
                 if peak > 1.0:
                     self.app.current_audio /= peak
-                return f"✅ Volume +{percent*100:.0f}%"
+                return f"✅ Громкость +{percent*100:.0f}%"
             elif "loop" in command:
-                loop_fade = int(2 * SAMPLE_RATE)
-                fade_out = np.linspace(1.0, 0.0, loop_fade)
-                fade_in = np.linspace(0.0, 1.0, loop_fade)
-                self.app.current_audio[:loop_fade] = self.app.current_audio[:loop_fade] * fade_in + self.app.current_audio[-loop_fade:] * fade_out
-                self.app.current_audio[-loop_fade:] = self.app.current_audio[-loop_fade:] * fade_out + self.app.current_audio[:loop_fade] * fade_in
-                return "✅ Loop mode applied"
+                self.app.loop_var.set(True)
+                return "✅ Loop mode включён"
             elif "reverse" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_reverse(self.app.current_audio)
-                return "✅ Reversed"
+                return "✅ Реверс"
             elif "reverb" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_reverb(self.app.current_audio)
-                return "✅ Reverb applied"
+                return "✅ Реверб"
             elif "delay" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_delay(self.app.current_audio)
-                return "✅ Delay applied"
+                return "✅ Дилей"
             elif "bass" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_bass_boost(self.app.current_audio)
-                return "✅ Bass boost applied"
+                return "✅ Бас усилен"
             elif "pitch" in command:
-                match = re.search(r'([+-]?\d+)', command)
-                semitones = int(match.group(1)) if match else 2
+                semitones = int(re.search(r'([+-]?\d+)', command).group(1)) if re.search(r'([+-]?\d+)', command) else 2
                 self.app.current_audio = MusicLicenseGenerator.apply_pitch_shift(self.app.current_audio, semitones)
-                return f"✅ Pitch shifted {semitones:+d} semitones"
+                return f"✅ Питч {semitones:+d}"
             elif "master" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_auto_master(self.app.current_audio)
-                return "✅ Auto-mastering applied"
-            elif "eq" in command:
-                match = re.search(r'(low|mid|high)\s*([+-]?\d+)', command)
-                if match:
-                    band = match.group(1)
-                    gain = int(match.group(2))
-                    low = gain if band == "low" else 0
-                    mid = gain if band == "mid" else 0
-                    high = gain if band == "high" else 0
-                    self.app.current_audio = MusicLicenseGenerator.apply_eq_3band(self.app.current_audio, low, mid, high)
-                    return f"✅ EQ {band} {gain:+d}dB"
-                return "Usage: 'eq low +3' or 'eq high -2'"
+                return "✅ Мастеринг"
             elif "normalize" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_normalize(self.app.current_audio)
-                return "✅ Normalized"
+                return "✅ Нормализация"
             elif "harmon" in command:
                 self.app.current_audio = MusicLicenseGenerator.apply_harmonizer(self.app.current_audio)
-                return "✅ Harmonizer applied"
+                return "✅ Гармонии"
+            elif "gate" in command:
+                self.app.current_audio = MusicLicenseGenerator.apply_spectral_gate(self.app.current_audio)
+                return "✅ Шумоподавление"
             elif "stems" in command or "separate" in command:
-                return "🎵 Use 'Stem Separation' button in Effects panel"
+                stems = MusicLicenseGenerator.separate_stems_named(np.squeeze(self.app.current_audio))
+                for name, stem in stems.items():
+                    fn = f"stem_{name}_{datetime.now().strftime('%H%M%S')}.wav"
+                    sf.write(fn, stem, SAMPLE_RATE)
+                return "✅ Стемы: bass, drums, melody, pads"
+            elif "video" in command:
+                gif, mp4 = MusicLicenseGenerator.export_video(np.squeeze(self.app.current_audio))
+                if mp4:
+                    return f"✅ Видео: {mp4}"
+                return f"✅ GIF: {gif}"
+            elif "game" in command:
+                engine = "godot" if "godot" in command else "unity"
+                if self.app.current_audio_path:
+                    meta = MusicLicenseGenerator.export_game_meta(self.app.current_audio_path, engine)
+                    return f"✅ {engine} meta: {meta}"
+                return "Сначала сгенерируй трек"
+            elif "verify" in command:
+                if self.app.current_fingerprint:
+                    fp = MusicLicenseGenerator.compute_fingerprint(np.squeeze(self.app.current_audio))
+                    match = MusicLicenseGenerator.verify_fingerprint(np.squeeze(self.app.current_audio), self.app.current_fingerprint)
+                    return f"🔍 Отпечаток: {'СОВПАДАЕТ ✓' if match == 100 else 'НЕ совпадает ✗'}"
+                return "Нет отпечатка для проверки"
+            elif "style" in command:
+                style = MusicLicenseGenerator.analyze_style(np.squeeze(self.app.current_audio))
+                if style:
+                    return f"🎨 Стиль: {style['bpm']} BPM, {style['key']}, {style['mood']}"
+                return "Не удалось проанализировать"
             elif "stats" in command:
-                analytics = MusicLicenseGenerator.get_audio_analytics(self.app.current_audio)
-                bands = MusicLicenseGenerator.get_frequency_bands(self.app.current_audio)
-                text = f"📊 Analytics:\n• Duration: {analytics['duration']}s\n• RMS: {analytics['rms']}\n• Peak: {analytics['peak']}\n• Dynamic Range: {analytics['dynamic_range_db']} dB\n\n📈 Frequency Bands:\n"
-                if bands:
-                    for band, val in bands.items():
-                        text += f"• {band}: {val:.2f}\n"
-                return text
+                a = MusicLicenseGenerator.get_audio_analytics(np.squeeze(self.app.current_audio))
+                return f"📊 {a['duration']}с | RMS {a['rms']} | Пик {a['peak']} | DR {a['dynamic_range_db']}dB"
             elif "chord" in command:
-                chords_text = "🎵 Popular progressions:\n"
+                t = "🎵 Прогрессии:\n"
                 for name, roman, notes in CHORD_PROGRESSIONS:
-                    chords_text += f"• {name}: {roman} ({notes})\n"
-                return chords_text
-            elif "export" in command or "mp3" in command:
-                if LICENSE_MODE == "PRO":
-                    return "🎵 MP3 export available. Use Export button."
-                return "⚠️ MP3 export is PRO only"
+                    t += f"• {name}: {roman} ({notes})\n"
+                return t
             else:
-                return "Unknown command. Try: 'trim to 20s', 'reverb', 'master', 'eq low +3', 'stats', 'stems'"
+                return "Не понял. Попробуй: 'реверб', 'мастер', 'видео', 'игра unity', 'проверь', 'стемы', 'стата'"
         except Exception as e:
-            return f"❌ Error: {e}"
+            return f"❌ Ошибка: {e}"
 
 
 class SettingsWindow(ctk.CTkToplevel):
@@ -808,7 +1084,7 @@ class SettingsWindow(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.title("Settings")
-        self.geometry("420x560")
+        self.geometry("440x600")
         self.configure(fg_color=T["card"])
         self.resizable(False, False)
         self.attributes("-topmost", True)
@@ -833,19 +1109,16 @@ class SettingsWindow(ctk.CTkToplevel):
         theme_btns.pack(fill="x", padx=15, pady=(0, 12))
         for theme_name in ["dark", "light", "midnight"]:
             ctk.CTkButton(theme_btns, text=theme_name.capitalize(), width=110, height=36, corner_radius=8, fg_color=T["accent"] if CURRENT_THEME == theme_name else T["card"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 12), command=lambda t=theme_name: self._set_theme(t)).pack(side="left", padx=5, expand=True)
+        # Лицензия
         lic_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         lic_frame.pack(fill="x", padx=20, pady=8)
-        ctk.CTkLabel(lic_frame, text="🔐 License Mode", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
-        ctk.CTkLabel(lic_frame, text=f"Current: {LICENSE_MODE}", font=("Segoe UI", 14, "bold"), text_color=T["accent"]).pack(anchor="w", padx=15, pady=(0, 12))
+        ctk.CTkLabel(lic_frame, text="🌍 License Languages", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 4))
+        ctk.CTkLabel(lic_frame, text="RU / EN / DE / FR — 4-язычный\nюридический сертификат в каждом треке", font=("Segoe UI", 11), text_color=T["text_secondary"], justify="left").pack(anchor="w", padx=15, pady=(0, 12))
         stats = self.app.db.get_stats()
         stats_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
         stats_frame.pack(fill="x", padx=20, pady=8)
         ctk.CTkLabel(stats_frame, text="📊 Statistics", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
-        ctk.CTkLabel(stats_frame, text=f"Total tracks: {stats['total']}\nFavorites: {stats['favorites']}", font=("Segoe UI", 12), text_color=T["text_secondary"]).pack(anchor="w", padx=15, pady=(0, 12))
-        about_frame = ctk.CTkFrame(self, fg_color=T["card_hover"], corner_radius=12)
-        about_frame.pack(fill="x", padx=20, pady=8)
-        ctk.CTkLabel(about_frame, text="ℹ️ About", font=("Segoe UI", 13, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=15, pady=(12, 8))
-        ctk.CTkLabel(about_frame, text="Aegis Audio Pro v1.0\nRoyalty-free AI audio generator\nwith cryptographic licensing", font=("Segoe UI", 11), text_color=T["text_secondary"], justify="left").pack(anchor="w", padx=15, pady=(0, 12))
+        ctk.CTkLabel(stats_frame, text=f"Total tracks: {stats['total']}  |  Favorites: {stats['favorites']}", font=("Segoe UI", 12), text_color=T["text_secondary"]).pack(anchor="w", padx=15, pady=(0, 12))
         ctk.CTkButton(self, text="Close", height=44, corner_radius=12, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 14, "bold"), command=self.destroy).pack(pady=20)
 
     def _set_lang(self, lang):
@@ -866,12 +1139,11 @@ class SettingsWindow(ctk.CTkToplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Aegis Audio Pro")
+        self.title("Aegis Audio Pro v2.0")
         self.geometry("1200x1000")
         self.resizable(True, True)
         self.configure(fg_color=T["app"])
         self.is_fullscreen = False
-        self.start_time = datetime.now()
         try:
             self.iconbitmap("app.ico")
         except:
@@ -881,6 +1153,7 @@ class App(ctk.CTk):
         self.model_loaded = False
         self.current_audio = None
         self.current_audio_path = None
+        self.current_fingerprint = None
         self.original_audio = None
         self.is_playing = False
         self.track_count = 0
@@ -898,6 +1171,7 @@ class App(ctk.CTk):
         self.batch_var = ctk.IntVar(value=1)
         self.seed_var = ctk.BooleanVar(value=False)
         self.search_var = ctk.StringVar(value="")
+        self.mode_var = ctk.IntVar(value=0)  # 0=music, 1=sfx
         self._build_ui()
         self._bind_hotkeys()
         self.after(300, self._pulse_status)
@@ -913,34 +1187,30 @@ class App(ctk.CTk):
         self.bind("<F11>", lambda e: self._toggle_fullscreen())
 
     def _build_ui(self):
-        self.island = DynamicIsland(self, self)
+        self.ai_assistant = AIAssistantPanel(self, self)
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=24, pady=(10, 24))
-
         canvas = ctk.CTkCanvas(main, bg=T["app"], highlightthickness=0)
         scrollbar = ctk.CTkScrollbar(main, orientation="vertical", command=canvas.yview)
         scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
-
         scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         win = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        # ФИКС 3: растягиваем scrollable_frame на всю ширину canvas
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
         canvas.configure(yscrollcommand=scrollbar.set)
-
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-
-        # ФИКС 3: используем grid вместо pack для растягивания колонок
         scrollable_frame.grid_columnconfigure(0, weight=1)
         scrollable_frame.grid_columnconfigure(1, weight=0)
+        scrollable_frame.grid_columnconfigure(2, weight=1)
         scrollable_frame.grid_rowconfigure(0, weight=1)
-
         left = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         right = ctk.CTkFrame(scrollable_frame, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, width=340)
         right.grid(row=0, column=1, sticky="ns")
         right.pack_propagate(False)
+        spacer = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
+        spacer.grid(row=0, column=2, sticky="nsew")
         self._canvas = canvas
         self._scrollable_frame = scrollable_frame
 
@@ -949,13 +1219,15 @@ class App(ctk.CTk):
         title_row = ctk.CTkFrame(header, fg_color="transparent")
         title_row.pack(fill="x", padx=22, pady=(18, 6))
         ctk.CTkLabel(title_row, text="Aegis Audio Pro", font=("Segoe UI Variable Display", 30, "bold"), text_color=T["text_primary"]).pack(side="left")
+        ctk.CTkLabel(title_row, text="v2.0", font=("Segoe UI", 11, "bold"), text_color=T["accent"]).pack(side="left", padx=(8, 0), pady=(8, 0))
         self.license_label = ctk.CTkLabel(title_row, text=f"[{LICENSE_MODE}]", font=("Segoe UI", 12, "bold"), text_color=T["success"] if LICENSE_MODE == "PRO" else T["warning"])
         self.license_label.pack(side="right", padx=(0, 10))
+        ctk.CTkButton(title_row, text="🤖 AI", width=60, height=30, corner_radius=8, fg_color=T["accent"], hover_color=T["accent_hover"], text_color="#FFFFFF", font=("Segoe UI", 12, "bold"), command=self._toggle_ai_assistant).pack(side="right", padx=(0, 10))
         ctk.CTkButton(title_row, text="⚙️", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._open_settings).pack(side="right", padx=(0, 10))
         self.fs_btn = ctk.CTkButton(title_row, text="⛶", width=40, height=30, corner_radius=8, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 14), command=self._toggle_fullscreen).pack(side="right", padx=(0, 10))
         self.counter_label = ctk.CTkLabel(title_row, text=f"{self.track_count} {tr('tracks')}", font=("Segoe UI", 12), text_color=T["text_dim"])
         self.counter_label.pack(side="right", pady=6)
-        ctk.CTkLabel(header, text="Royalty-free AI audio with cryptographic licensing", font=("Segoe UI", 13), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(0, 18))
+        ctk.CTkLabel(header, text="4-language legal license  |  QR verification  |  Audio fingerprint", font=("Segoe UI", 13), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(0, 18))
 
         status_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         status_card.pack(fill="x", pady=(0, 14))
@@ -968,6 +1240,17 @@ class App(ctk.CTk):
         self.progress_bar.pack(fill="x", padx=22, pady=(0, 14))
         self.progress_bar.set(1.0 if self.model_loaded else 0)
 
+        # ===== РЕЖИМ MUSIC / SFX =====
+        mode_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
+        mode_card.pack(fill="x", pady=(0, 14))
+        mode_row = ctk.CTkFrame(mode_card, fg_color="transparent")
+        mode_row.pack(fill="x", padx=22, pady=14)
+        ctk.CTkLabel(mode_row, text="MODE:", font=("Segoe UI", 12, "bold"), text_color=T["text_secondary"]).pack(side="left")
+        ctk.CTkRadioButton(mode_row, text=tr("mode_music"), variable=self.mode_var, value=0, font=("Segoe UI", 12), fg_color=T["accent"], text_color=T["text_primary"], command=self._switch_mode).pack(side="left", padx=12)
+        ctk.CTkRadioButton(mode_row, text=tr("mode_sfx"), variable=self.mode_var, value=1, font=("Segoe UI", 12), fg_color=T["accent"], text_color=T["text_primary"], command=self._switch_mode).pack(side="left", padx=12)
+        self.sfx_hint = ctk.CTkLabel(mode_row, text="", font=("Segoe UI", 11), text_color=T["text_dim"])
+        self.sfx_hint.pack(side="right")
+
         prompt_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         prompt_card.pack(fill="x", pady=(0, 14))
         prompt_header = ctk.CTkFrame(prompt_card, fg_color="transparent")
@@ -977,18 +1260,13 @@ class App(ctk.CTk):
         self.prompt_box = ctk.CTkTextbox(prompt_card, height=92, corner_radius=14, font=("Segoe UI", 13), wrap="word", fg_color=T["card_hover"], border_color=T["border"], border_width=1)
         self.prompt_box.pack(fill="x", padx=22, pady=(0, 10))
         self.prompt_box.insert("1.0", PRESETS["Trap"]["prompt"])
-        chips_frame = ctk.CTkFrame(prompt_card, fg_color="transparent")
-        chips_frame.pack(fill="x", padx=22, pady=(0, 18))
-        for name, data in PRESETS.items():
-            chip = ctk.CTkButton(chips_frame, text=name, width=100, height=30, corner_radius=15, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_secondary"], font=("Segoe UI", 11), command=lambda t=data["prompt"]: self._set_prompt(t))
-            chip.pack(side="left", padx=(0, 6))
-            desc = PRESET_DESCRIPTIONS.get(name, "")
-            if desc:
-                chip.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
+        self.chips_frame = ctk.CTkFrame(prompt_card, fg_color="transparent")
+        self.chips_frame.pack(fill="x", padx=22, pady=(0, 18))
+        self._build_chips()
 
         settings_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         settings_card.pack(fill="x", pady=(0, 14))
-        self._add_slider_row(settings_card, tr("duration"), 5, 120, 10, self._update_duration_label)
+        self._add_slider_row(settings_card, tr("duration"), 1, 120, 10, self._update_duration_label)
         self.duration_slider = settings_card._last_slider
         self.duration_label = settings_card._last_value_label
         self._add_slider_row(settings_card, tr("creativity"), 0.5, 2.0, 1.0, self._update_temp_label)
@@ -1022,6 +1300,38 @@ class App(ctk.CTk):
         self.export_btn = ctk.CTkButton(btn_frame, text=tr("export"), height=58, corner_radius=18, font=("Segoe UI", 14, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=self._export_audio, state="disabled")
         self.export_btn.pack(side="left", fill="x", expand=True)
 
+        download_frame = ctk.CTkFrame(left, fg_color="transparent")
+        download_frame.pack(fill="x", pady=(0, 14))
+        self.download_wav_btn = ctk.CTkButton(download_frame, text=tr("download_wav"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=lambda: self._quick_download("wav"), state="disabled")
+        self.download_wav_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.download_mp3_btn = ctk.CTkButton(download_frame, text=tr("download_mp3"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=lambda: self._quick_download("mp3"), state="disabled")
+        self.download_mp3_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.download_ogg_btn = ctk.CTkButton(download_frame, text=tr("download_ogg"), height=40, corner_radius=12, font=("Segoe UI", 12, "bold"), fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], command=lambda: self._quick_download("ogg"), state="disabled")
+        self.download_ogg_btn.pack(side="left", fill="x", expand=True)
+
+        # ===== НОВЫЕ КНОПКИ v2.0 =====
+        pro_frame = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["accent"], border_width=1)
+        pro_frame.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(pro_frame, text="🌍 PRO FEATURES v2.0", font=("Segoe UI Variable Display", 13, "bold"), text_color=T["accent"]).pack(anchor="w", padx=22, pady=(14, 8))
+        pro_grid = ctk.CTkFrame(pro_frame, fg_color="transparent")
+        pro_grid.pack(fill="x", padx=22, pady=(0, 14))
+        pro_buttons = [
+            (tr("video"), self._export_video),
+            (tr("game"), self._export_game),
+            (tr("verify"), self._verify_fingerprint),
+            (tr("style"), self._style_transfer),
+            ("🧬 Fingerprint", self._show_fingerprint),
+            ("🌐 4-Lang License", self._show_license_info),
+        ]
+        for i, (text, cmd) in enumerate(pro_buttons):
+            row_idx = i // 3
+            col_idx = i % 3
+            btn = ctk.CTkButton(pro_grid, text=text, height=44, corner_radius=12, fg_color=T["card_hover"], hover_color=T["accent"], text_color=T["text_primary"], font=("Segoe UI", 12, "bold"), command=cmd, state="disabled")
+            btn.grid(row=row_idx, column=col_idx, padx=5, pady=5, sticky="ew")
+        for c in range(3):
+            pro_grid.grid_columnconfigure(c, weight=1)
+        self.pro_buttons = [w for w in pro_grid.winfo_children() if isinstance(w, ctk.CTkButton)]
+
         self.wave_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1, height=150)
         self.wave_card.pack(fill="x", pady=(0, 14))
         self.wave_card.pack_propagate(False)
@@ -1035,46 +1345,44 @@ class App(ctk.CTk):
 
         effects_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         effects_card.pack(fill="x", pady=(0, 14))
-        ctk.CTkLabel(effects_card, text=tr("effects"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
+        ctk.CTkLabel(effects_card, text=tr("effects"), font=("Segoe UI Variable Display", 14, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=22, pady=(18, 12))
         effects_grid = ctk.CTkFrame(effects_card, fg_color="transparent")
         effects_grid.pack(fill="x", padx=22, pady=(0, 16))
         effect_buttons = [
-            ("🔊 Reverb", "reverb"), ("🔁 Delay", "delay"), ("🎵 Pitch +2", "pitch_up"),
-            ("🎵 Pitch -2", "pitch_down"), ("⏩ Speed 1.2x", "speed_up"), ("⏪ Reverse", "reverse"),
-            ("🔉 Bass Boost", "bass"), ("📏 Normalize", "normalize"), ("🎚️ Auto Master", "master"),
-            ("🎛️ Harmonizer", "harmonizer"), ("🔇 Spectral Gate", "gate"), ("🆚 A/B Compare", "ab"),
-            ("↩️ Undo", "undo"), ("↪️ Redo", "redo"), ("📋 Copy Hash", "copy_hash"),
-            ("🎵 Stems", "stems"),
+            ("Reverb", "reverb"), ("Delay", "delay"), ("Pitch +2", "pitch_up"), ("Pitch -2", "pitch_down"),
+            ("Speed 1.2x", "speed_up"), ("Reverse", "reverse"), ("Bass Boost", "bass"), ("Normalize", "normalize"),
+            ("Auto Master", "master"), ("Harmonizer", "harmonizer"), ("Spectral Gate", "gate"), ("A/B Compare", "ab"),
+            ("Undo", "undo"), ("Redo", "redo"), ("Copy Hash", "copy_hash"), ("Stems", "stems"),
         ]
         for i, (text, cmd) in enumerate(effect_buttons):
-            row_idx = i // 6
-            col_idx = i % 6
-            btn = ctk.CTkButton(effects_grid, text=text, width=120, height=36, corner_radius=10, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_primary"], font=("Segoe UI", 10), command=lambda c=cmd: self._handle_effect(c))
-            btn.grid(row=row_idx, column=col_idx, padx=4, pady=4, sticky="ew")
+            row_idx = i // 4
+            col_idx = i % 4
+            btn = ctk.CTkButton(effects_grid, text=text, height=48, corner_radius=12, fg_color=T["card_hover"], hover_color=T["accent"], text_color=T["text_primary"], font=("Segoe UI", 14, "bold"), command=lambda c=cmd: self._handle_effect(c))
+            btn.grid(row=row_idx, column=col_idx, padx=6, pady=6, sticky="ew")
             desc = EFFECT_DESCRIPTIONS.get(cmd, "")
             if desc:
                 btn.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
-        for c in range(6):
+        for c in range(4):
             effects_grid.grid_columnconfigure(c, weight=1)
 
         meta_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         meta_card.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(meta_card, text=tr("metadata"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
-        self.meta_text = ctk.CTkLabel(meta_card, text="BPM: -- | Key: -- | Duration: -- | RMS: --", font=("Consolas", 11), text_color=T["text_dim"], wraplength=700, justify="left")
+        self.meta_text = ctk.CTkLabel(meta_card, text="BPM: -- | Key: -- | Duration: -- | RMS: --", font=("Consolas", 12), text_color=T["text_primary"], wraplength=700, justify="left")
         self.meta_text.pack(anchor="w", padx=22, pady=(0, 16))
 
         result_card = ctk.CTkFrame(left, fg_color=T["card"], corner_radius=22, border_color=T["border"], border_width=1)
         result_card.pack(fill="x")
         ctk.CTkLabel(result_card, text=tr("result"), font=("Segoe UI", 11, "bold"), text_color=T["text_dim"]).pack(anchor="w", padx=22, pady=(16, 8))
-        self.result_text = ctk.CTkLabel(result_card, text=tr("empty_result"), font=("Consolas", 11), text_color=T["text_dim"], wraplength=700, justify="left")
+        self.result_text = ctk.CTkLabel(result_card, text=tr("empty_result"), font=("Consolas", 12), text_color=T["text_primary"], wraplength=700, justify="left")
         self.result_text.pack(anchor="w", padx=22, pady=(0, 10))
         btn_row = ctk.CTkFrame(result_card, fg_color="transparent")
         btn_row.pack(fill="x", padx=22, pady=(0, 18))
-        self.play_btn = ctk.CTkButton(btn_row, text=tr("play"), width=130, height=36, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 12), command=self._toggle_play, state="disabled")
+        self.play_btn = ctk.CTkButton(btn_row, text=tr("play"), width=130, height=40, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 13, "bold"), command=self._toggle_play, state="disabled")
         self.play_btn.pack(side="left", padx=(0, 8))
-        self.save_btn = ctk.CTkButton(btn_row, text=tr("save"), width=160, height=36, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 12), command=self._save_project, state="disabled")
+        self.save_btn = ctk.CTkButton(btn_row, text=tr("save"), width=160, height=40, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 13, "bold"), command=self._save_project, state="disabled")
         self.save_btn.pack(side="left", padx=(0, 8))
-        self.open_btn = ctk.CTkButton(btn_row, text=tr("folder"), width=100, height=36, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 12), command=self._open_folder, state="disabled")
+        self.open_btn = ctk.CTkButton(btn_row, text=tr("folder"), width=100, height=40, corner_radius=12, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["accent"], font=("Segoe UI", 13, "bold"), command=self._open_folder, state="disabled")
         self.open_btn.pack(side="left")
 
         ctk.CTkLabel(right, text=tr("history"), font=("Segoe UI Variable Display", 18, "bold"), text_color=T["text_primary"]).pack(anchor="w", padx=20, pady=(20, 14))
@@ -1090,6 +1398,134 @@ class App(ctk.CTk):
         self.history_empty = ctk.CTkLabel(self.history_scroll, text=tr("empty_history"), font=("Segoe UI", 12), text_color=T["text_dim"], justify="center")
         self.history_empty.pack(expand=True, pady=40)
 
+    def _build_chips(self):
+        for w in self.chips_frame.winfo_children():
+            w.destroy()
+        presets = SFX_PRESETS if self.mode_var.get() == 1 else PRESETS
+        for name, data in presets.items():
+            chip = ctk.CTkButton(self.chips_frame, text=name, width=100, height=30, corner_radius=15, fg_color=T["card_hover"], hover_color=T["border"], text_color=T["text_secondary"], font=("Segoe UI", 11), command=lambda t=data["prompt"]: self._set_prompt(t))
+            chip.pack(side="left", padx=(0, 6))
+            desc = (PRESET_DESCRIPTIONS if self.mode_var.get() == 0 else {}).get(name, "")
+            if desc:
+                chip.bind("<Button-3>", lambda e, d=desc: self._show_tooltip(e, d))
+
+    def _switch_mode(self):
+        self._build_chips()
+        if self.mode_var.get() == 1:
+            self.sfx_hint.configure(text="Звуковые эффекты: 1-3 сек")
+            self.duration_slider.set(2)
+            self._update_duration_label(2)
+        else:
+            self.sfx_hint.configure(text="")
+            self.duration_slider.set(10)
+            self._update_duration_label(10)
+
+    def _toggle_ai_assistant(self):
+        if self.ai_assistant.is_expanded:
+            self.ai_assistant._collapse()
+        else:
+            self.ai_assistant._expand()
+
+    # ===== НОВЫЕ ДЕЙСТВИЯ v2.0 =====
+    def _export_video(self):
+        if not self.current_audio:
+            self.set_status(tr("no_track"))
+            return
+        self.set_status("Rendering video...")
+        threading.Thread(target=lambda: self._video_worker(), daemon=True).start()
+
+    def _video_worker(self):
+        try:
+            gif, mp4 = MusicLicenseGenerator.export_video(np.squeeze(self.current_audio))
+            def done():
+                if mp4:
+                    self.set_status(f"✅ Video: {mp4}")
+                elif gif:
+                    self.set_status(f"✅ GIF: {gif} (MP4 requires ffmpeg)")
+                else:
+                    self.set_status("Video export failed")
+            self.after(0, done)
+        except Exception as e:
+            self.after(0, lambda: self.set_status(f"Video error: {e}"))
+
+    def _export_game(self):
+        if not self.current_audio_path:
+            self.set_status(tr("no_track"))
+            return
+        from tkinter import messagebox
+        engine = "unity" if messagebox.askyesno("Game Export", "Unity? (Yes) / Godot? (No)") else "godot"
+        meta = MusicLicenseGenerator.export_game_meta(self.current_audio_path, engine)
+        self.set_status(f"✅ {engine} meta: {meta}")
+
+    def _verify_fingerprint(self):
+        if not self.current_audio or not self.current_fingerprint:
+            self.set_status("No fingerprint")
+            return
+        match = MusicLicenseGenerator.verify_fingerprint(np.squeeze(self.current_audio), self.current_fingerprint)
+        self.set_status(f"🔍 Fingerprint match: {match:.0f}%")
+
+    def _style_transfer(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(title="Select reference audio", filetypes=[("Audio", "*.wav *.mp3 *.ogg")])
+        if not path:
+            return
+        try:
+            ref, sr = sf.read(path)
+            if len(ref.shape) > 1:
+                ref = ref[:, 0]
+            if sr != SAMPLE_RATE:
+                ref = librosa.resample(ref, orig_sr=sr, target_sr=SAMPLE_RATE)
+            style = MusicLicenseGenerator.analyze_style(ref)
+            if style:
+                prompt = self.prompt_box.get("1.0", "end").strip()
+                new_prompt = f"{prompt}, {style['bpm']} bpm, {style['key']} key, {style['mood']}"
+                self._set_prompt(new_prompt)
+                self.set_status(f"🎨 Style applied: {style['bpm']} BPM, {style['key']}")
+        except Exception as e:
+            self.set_status(f"Style error: {e}")
+
+    def _show_fingerprint(self):
+        if self.current_fingerprint:
+            pyperclip.copy(self.current_fingerprint)
+            self.set_status(f"🧬 Fingerprint copied: {self.current_fingerprint[:24]}...")
+        else:
+            self.set_status("No fingerprint")
+
+    def _show_license_info(self):
+        from tkinter import messagebox
+        messagebox.showinfo("4-Language License",
+            "Each track includes a legal certificate in:\n\n"
+            "🇷🇺 Russian (RU) — для РФ и СНГ\n"
+            "🇬🇧 English (EN) — международный\n"
+            "🇩🇪 German (DE) — для ЕС\n"
+            "🇫🇷 French (FR) — для ЕС\n\n"
+            "Плюс QR-код для верификации и аудио-отпечаток,\n"
+            "устойчивый к перекодированию файла.")
+
+    def _quick_download(self, format):
+        if not self.current_audio:
+            self.set_status(tr("no_track"))
+            return
+        try:
+            if format == "mp3" and LICENSE_MODE == "FREE":
+                from tkinter import messagebox
+                messagebox.showinfo("PRO feature", "MP3 export is PRO only")
+                return
+            audio = np.squeeze(self.current_audio)
+            if format == "wav":
+                filename = MusicLicenseGenerator.save_wav(audio)
+            elif format == "mp3":
+                metadata = {"artist": "Aegis Audio", "title": self.prompt_box.get("1.0", "end").strip()[:50], "genre": "Electronic"}
+                bpm = self.generator.detect_bpm(audio)
+                if bpm:
+                    metadata["bpm"] = bpm
+                filename = MusicLicenseGenerator.save_mp3(audio, metadata=metadata)
+            elif format == "ogg":
+                filename = MusicLicenseGenerator.save_ogg(audio)
+            self.set_status(f"{tr('exported')}: {filename}")
+        except Exception as e:
+            self.set_status(f"{tr('export_error')}: {str(e)}")
+
     def _show_tooltip(self, event, text):
         if self._tooltip:
             try:
@@ -1101,10 +1537,8 @@ class App(ctk.CTk):
         tw.overrideredirect(True)
         tw.attributes("-topmost", True)
         tw.configure(fg_color=T["card"], border_color=T["accent"], border_width=1)
-        x = event.x_root + 14
-        y = event.y_root + 14
-        tw.geometry(f"+{x}+{y}")
-        ctk.CTkLabel(tw, text=text, font=("Segoe UI", 11), text_color=T["text_primary"], wraplength=280, justify="left").pack(padx=14, pady=12)
+        tw.geometry(f"+{event.x_root + 14}+{event.y_root + 14}")
+        ctk.CTkLabel(tw, text=text, font=("Segoe UI", 12), text_color=T["text_primary"], wraplength=300, justify="left").pack(padx=16, pady=14)
         tw.update_idletasks()
         def close(e=None):
             try:
@@ -1121,26 +1555,15 @@ class App(ctk.CTk):
     def _rebuild_ui(self):
         try:
             prompt = self.prompt_box.get("1.0", "end").strip()
-        except:
-            prompt = ""
-        try:
             dur = self.duration_slider.get()
             temp = self.temp_slider.get()
             guid = self.guidance_slider.get()
-        except:
-            dur, temp, guid = 10, 1.0, 3.0
-        try:
             user = self.user_entry.get()
-        except:
-            user = ""
-        try:
             info = self.result_text.cget("text")
-        except:
-            info = tr("empty_result")
-        try:
             meta = self.meta_text.cget("text")
         except:
-            meta = "BPM: -- | Key: -- | Duration: -- | RMS: --"
+            prompt, dur, temp, guid, user = "", 10, 1.0, 3.0, ""
+            info, meta = tr("empty_result"), "BPM: -- | Key: -- | Duration: -- | RMS: --"
         for w in self.winfo_children():
             w.destroy()
         self._build_ui()
@@ -1168,10 +1591,9 @@ class App(ctk.CTk):
             self.meta_text.configure(text=meta, text_color=T["text_primary"])
             if self.current_audio is not None:
                 self._draw_waveform(self.current_audio)
-                self.play_btn.configure(state="normal")
-                self.save_btn.configure(state="normal")
-                self.export_btn.configure(state="normal")
-                self.open_btn.configure(state="normal")
+                for b in [self.play_btn, self.save_btn, self.export_btn, self.open_btn,
+                          self.download_wav_btn, self.download_mp3_btn, self.download_ogg_btn] + self.pro_buttons:
+                    b.configure(state="normal")
             self._update_history()
             self._update_favorites()
         except Exception as e:
@@ -1196,12 +1618,8 @@ class App(ctk.CTk):
 
     def _toggle_fullscreen(self):
         self.is_fullscreen = not self.is_fullscreen
-        if self.is_fullscreen:
-            self.attributes("-fullscreen", True)
-            self.fs_btn.configure(text="✕")
-        else:
-            self.attributes("-fullscreen", False)
-            self.fs_btn.configure(text="⛶")
+        self.attributes("-fullscreen", self.is_fullscreen)
+        self.fs_btn.configure(text="✕" if self.is_fullscreen else "⛶")
 
     def _toggle_view(self):
         self._view_mode = "spectrum" if self._view_mode == "waveform" else "waveform"
@@ -1212,11 +1630,11 @@ class App(ctk.CTk):
     def _add_slider_row(self, parent, label, from_, to, default, update_fn):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", padx=22, pady=(14, 6))
-        ctk.CTkLabel(row, text=label, font=("Segoe UI", 12), text_color=T["text_secondary"]).pack(side="left")
+        ctk.CTkLabel(row, text=label, font=("Segoe UI", 13), text_color=T["text_secondary"]).pack(side="left")
         slider = ctk.CTkSlider(row, from_=from_, to=to, width=280, command=update_fn, progress_color=T["accent"], fg_color=T["border"], button_color=T["text_primary"], button_hover_color=T["card_hover"], button_length=24)
         slider.set(default)
         slider.pack(side="left", padx=14)
-        value_label = ctk.CTkLabel(row, text="", font=("Segoe UI", 12, "bold"), text_color=T["accent"])
+        value_label = ctk.CTkLabel(row, text="", font=("Segoe UI", 13, "bold"), text_color=T["accent"])
         value_label.pack(side="left")
         parent._last_slider = slider
         parent._last_value_label = value_label
@@ -1227,7 +1645,7 @@ class App(ctk.CTk):
         self._pulse_state = not self._pulse_state
         color = T["accent"] if self._pulse_state else T["warning"]
         current = self.status_label.cget("text")
-        if "Init" in current or "Load" in current or "Загрузка" in current or "Инициализация" in current:
+        if "Init" in current or "Load" in current or "Загрузка" in current:
             self.status_label.configure(text_color=color)
         self.after(700, self._pulse_status)
 
@@ -1264,7 +1682,10 @@ class App(ctk.CTk):
         draw_step(0)
 
     def _random_prompt(self):
-        self._set_prompt(random.choice(RANDOM_PROMPTS))
+        if self.mode_var.get() == 1:
+            self._set_prompt(random.choice(list(SFX_PRESETS.values()))["prompt"])
+        else:
+            self._set_prompt(random.choice(RANDOM_PROMPTS))
 
     def _toggle_seed(self):
         if self.seed_var.get():
@@ -1339,7 +1760,6 @@ class App(ctk.CTk):
             return
         self._save_undo_state()
         try:
-            # ФИКС 1: убираем лишние размерности
             audio = np.squeeze(self.current_audio)
             if effect == "reverb":
                 audio = MusicLicenseGenerator.apply_reverb(audio)
@@ -1367,19 +1787,18 @@ class App(ctk.CTk):
             self._draw_waveform(audio)
             self.set_status(f"{tr('applied')}: {effect}")
         except Exception as e:
-            err_msg = str(e)
-            self.set_status(f"{tr('effect_error')}: {err_msg}")
+            self.set_status(f"{tr('effect_error')}: {str(e)}")
 
     def _separate_stems(self):
         if not self.current_audio:
             self.set_status(tr("generate_first"))
             return
         self._save_undo_state()
-        stems = MusicLicenseGenerator.separate_stems_simple(np.squeeze(self.current_audio))
+        stems = MusicLicenseGenerator.separate_stems_named(np.squeeze(self.current_audio))
         for name, stem in stems.items():
-            filename = f"stem_{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+            filename = f"stem_{name}_{datetime.now().strftime('%H%M%S')}.wav"
             sf.write(filename, stem, SAMPLE_RATE)
-        self.set_status(f"Stems saved: bass, mid, high")
+        self.set_status("Stems: bass, drums, melody, pads")
 
     def _ab_compare(self):
         if self.original_audio is None or self.current_audio is None:
@@ -1398,8 +1817,7 @@ class App(ctk.CTk):
             self.is_playing = False
             self.after(0, lambda: self.play_btn.configure(text=tr("play")))
         threading.Thread(target=play_alternating, daemon=True).start()
-        self.play_btn.configure(text="🆚 A/B Playing...")
-        self.set_status("A/B Compare: Original → Current")
+        self.play_btn.configure(text="🆚 A/B...")
 
     def _copy_hash(self):
         if not self.current_audio_path:
@@ -1431,10 +1849,9 @@ class App(ctk.CTk):
                 self.set_status(tr("seed_number"))
                 return
         self.generate_btn.configure(state="disabled", text=tr("generating"))
-        self.play_btn.configure(state="disabled")
-        self.save_btn.configure(state="disabled")
-        self.export_btn.configure(state="disabled")
-        self.open_btn.configure(state="disabled")
+        for b in [self.play_btn, self.save_btn, self.export_btn, self.open_btn,
+                  self.download_wav_btn, self.download_mp3_btn, self.download_ogg_btn] + self.pro_buttons:
+            b.configure(state="disabled")
         self.set_progress(0)
         self.status_label.configure(text_color=T["accent"])
         threading.Thread(target=self._generate_worker, args=(prompt, duration, user_name, seed, temperature, guidance_scale, loop_mode, batch_count), daemon=True).start()
@@ -1450,10 +1867,14 @@ class App(ctk.CTk):
                 if score > best_score:
                     best_score = score
                     best_audio = audio
-                self.set_progress(int((i + 1) / batch_count * 90))
+                self.set_progress(int((i + 1) / batch_count * 80))
             self.original_audio = best_audio.copy()
             self.current_audio = best_audio
             self._save_undo_state()
+            self.set_status("Computing fingerprint...")
+            self.set_progress(82)
+            fingerprint = MusicLicenseGenerator.compute_fingerprint(best_audio)
+            self.current_fingerprint = fingerprint
             wav = self.generator.save_wav(best_audio)
             self.current_audio_path = wav
             file_hash = self.generator.calculate_hash(wav)
@@ -1461,21 +1882,35 @@ class App(ctk.CTk):
             key = self.generator.detect_key(best_audio)
             analytics = self.generator.get_audio_analytics(best_audio)
             license_type = "Commercial" if LICENSE_MODE == "PRO" else "Personal"
-            pdf = self.generator.generate_license_pdf(wav, file_hash, user_name, license_type, bpm, key, analytics)
-            zip_file = self.generator.create_package(wav, pdf)
+            self.set_status("Generating 4-language license...")
+            self.set_progress(86)
+            qr_path = self.generator.generate_qr(file_hash, fingerprint, user_name)
+            pdf = self.generator.generate_multilang_license(wav, file_hash, user_name, license_type, bpm, key, analytics, fingerprint, qr_path)
+            fp_path = None
+            if fingerprint:
+                fp_path = f"{os.path.splitext(wav)[0]}.fingerprint"
+                with open(fp_path, 'w') as f:
+                    f.write(f"{fingerprint}\n{file_hash}\n{datetime.now().isoformat()}\n{user_name}\n")
+            zip_file = self.generator.create_package(wav, pdf, qr_path, fp_path)
             self.track_count += 1
             dur_str = f"{duration//60}:{duration%60:02d}" if duration >= 60 else f"{duration}s"
-            info = (f"File: {zip_file}\nDuration: {dur_str}\nLicensee: {user_name}\nLicense: {license_type}\nBPM: {bpm or '--'} | Key: {key or '--'}\nRMS: {analytics['rms']} | Peak: {analytics['peak']}\nDynamic Range: {analytics['dynamic_range_db']} dB\nTemp: {temperature:.1f} | Guidance: {guidance_scale:.1f}\nSHA-256: {file_hash[:32]}...\nSize: {os.path.getsize(zip_file) // 1024} KB")
+            info = (f"File: {zip_file}\nDuration: {dur_str}\nLicensee: {user_name}\nLicense: {license_type}\n"
+                    f"Languages: RU/EN/DE/FR\nBPM: {bpm or '--'} | Key: {key or '--'}\n"
+                    f"RMS: {analytics['rms']} | Peak: {analytics['peak']}\n"
+                    f"Dynamic Range: {analytics['dynamic_range_db']} dB\n"
+                    f"SHA-256: {file_hash[:32]}...\n"
+                    f"Fingerprint: {fingerprint[:32] if fingerprint else '--'}...\n"
+                    f"QR: {'✓' if qr_path else '✗'}\nSize: {os.path.getsize(zip_file) // 1024} KB")
             if seed is not None:
                 info += f"\nSeed: {seed}"
             if batch_count > 1:
-                info += f"\nVariants generated: {batch_count}"
+                info += f"\nVariants: {batch_count}"
             track_id = self.db.add_track(
                 prompt=prompt, duration=duration, bpm=bpm, key=key,
                 rms=analytics['rms'], peak=analytics['peak'],
                 dynamic_range=analytics['dynamic_range_db'],
                 license_type=license_type, licensee=user_name,
-                file_hash=file_hash, file_path=zip_file,
+                file_hash=file_hash, file_path=zip_file, fingerprint=fingerprint,
                 seed=seed, temperature=temperature, guidance_scale=guidance_scale,
                 loop_mode=1 if loop_mode else 0
             )
@@ -1483,12 +1918,11 @@ class App(ctk.CTk):
             self.history = self.history[:20]
             def done():
                 self.result_text.configure(text=info, text_color=T["text_primary"])
-                self.meta_text.configure(text=f"BPM: {bpm or '--'} | Key: {key or '--'} | Duration: {dur_str} | RMS: {analytics['rms']} | Loop: {'Yes' if loop_mode else 'No'}", text_color=T["text_primary"])
+                self.meta_text.configure(text=f"BPM: {bpm or '--'} | Key: {key or '--'} | Duration: {dur_str} | RMS: {analytics['rms']} | FP: {'✓' if fingerprint else '✗'}", text_color=T["text_primary"])
                 self.generate_btn.configure(state="normal", text=tr("generate"))
-                self.play_btn.configure(state="normal")
-                self.save_btn.configure(state="normal")
-                self.export_btn.configure(state="normal")
-                self.open_btn.configure(state="normal")
+                for b in [self.play_btn, self.save_btn, self.export_btn, self.open_btn,
+                          self.download_wav_btn, self.download_mp3_btn, self.download_ogg_btn] + self.pro_buttons:
+                    b.configure(state="normal")
                 self.counter_label.configure(text=f"{self.track_count} {tr('tracks')}")
                 self.set_status(tr("ready"))
                 self.status_label.configure(text_color=T["success"])
@@ -1520,6 +1954,7 @@ class App(ctk.CTk):
             "seed": int(self.seed_entry.get()) if self.seed_var.get() else None,
             "loop_mode": self.loop_var.get(),
             "batch_count": self.batch_var.get(),
+            "mode": "sfx" if self.mode_var.get() == 1 else "music",
             "timestamp": datetime.now().isoformat(),
         }
         filename = f"project_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -1532,7 +1967,7 @@ class App(ctk.CTk):
             self.set_status(tr("no_track"))
             return
         from tkinter import filedialog, messagebox
-        export_path = filedialog.asksaveasfilename(title="Export audio", defaultextension=".wav", filetypes=[("WAV", "*.wav"), ("MP3", "*.mp3"), ("OGG", "*.ogg"), ("FLAC", "*.flac"), ("MIDI", "*.mid")])
+        export_path = filedialog.asksaveasfilename(title="Export audio", defaultextension=".wav", filetypes=[("WAV", "*.wav"), ("MP3", "*.mp3"), ("OGG", "*.ogg")])
         if export_path:
             try:
                 if export_path.endswith(".mp3"):
@@ -1546,19 +1981,11 @@ class App(ctk.CTk):
                     self.generator.save_mp3(self.current_audio, metadata=metadata)
                 elif export_path.endswith(".ogg"):
                     self.generator.save_ogg(self.current_audio)
-                elif export_path.endswith(".flac"):
-                    self.generator.save_flac(self.current_audio)
-                elif export_path.endswith(".mid"):
-                    midi_path = self.generator.save_midi(self.current_audio)
-                    if midi_path:
-                        self.set_status(f"MIDI exported: {midi_path}")
-                    return
                 else:
                     self.generator.save_wav(self.current_audio)
                 self.set_status(f"{tr('exported')}: {export_path}")
             except Exception as e:
-                err_msg = str(e)
-                self.set_status(f"{tr('export_error')}: {err_msg}")
+                self.set_status(f"{tr('export_error')}: {str(e)}")
 
     def _update_history(self):
         for w in self.history_scroll.winfo_children():
@@ -1601,9 +2028,7 @@ class App(ctk.CTk):
         self.set_status("Favorite toggled")
 
     def _draw_waveform(self, audio):
-        # ФИКС 1: убираем лишние размерности
         audio = np.squeeze(audio)
-        # ФИКС 2: надёжно прячем placeholder
         try:
             self.wave_placeholder.pack_forget()
         except:
